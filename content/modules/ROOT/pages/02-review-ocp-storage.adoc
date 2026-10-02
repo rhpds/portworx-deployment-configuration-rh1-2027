@@ -1,0 +1,133 @@
+= Lab 02 - Understanding OpenShift Storage
+
+In this step, we will create a `StorageClass` for Portworx volumes.
+
+== Understanding StorageClass
+
+A https://docs.openshift.com/container-platform/4.16/storage/dynamic-provisioning.html[StorageClass] provides a way for administrators to describe the "classes" of storage available on their OpenShift cluster. Before we can create a volume in OpenShift, we need to create a `StorageClass`.
+
+For example, below is a Portworx `StorageClass` whose volumes have:
+
+* **Replication factor of 3**: This means the data for the volume is replicated across 3 different nodes in the cluster.
+* **High IO priority**: Portworx will use storage devices that are classified under the high IO profile, such as SSDs.
+
+Create the `StorageClass` by running the following command:
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc create -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: px-repl3-sc
+provisioner: pxd.portworx.com
+parameters:
+  repl: "3"
+  priority_io: "high"
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+EOF
+----
+
+Let's proceed by creating volumes that use this `StorageClass`.
+
+In this step, we will deploy a `PersistentVolumeClaim` using Portworx.
+
+== Understanding PersistentVolumeClaim
+
+A https://docs.openshift.com/container-platform/4.16/storage/understanding-persistent-storage.html[PersistentVolumeClaim] (PVC) can be used to dynamically create a volume using Portworx.
+
+Below is the spec for a 2GB volume that uses the Portworx `StorageClass` we created earlier.
+
+Let's create the `PersistentVolumeClaim`:
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc create -f -
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: px-pvc
+spec:
+  storageClassName: px-repl3-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+EOF
+----
+
+Behind the scenes, OpenShift communicates with the Portworx native driver to create this PVC. Each PVC has a unique one-to-one mapping to a `PersistentVolume` (PV), which is the actual volume backing the PVC.
+
+== Validate PersistentVolumeClaim
+
+A `PersistentVolumeClaim` is successfully provisioned once it reaches the "Bound" state. Let's run the following command to check its status:
+
+[,bash,role="execute"]
+----
+oc get pvc px-pvc
+----
+
+[,bash,role="execute"]
+----
+lab-user: ~]$ oc get pvc px-pvc
+NAME     STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+px-pvc   Bound    pvc-32bc4cb4-f91a-4c6f-b248-2a29290c5080   2Gi        RWO            px-repl3-sc    <unset>                 5s
+----
+
+
+You should see in the example output that our PVC is in the *Bound* state.
+
+Let's proceed to the next step to further inspect the volume.
+
+== Inspect the Portworx Volume
+
+Now, we will use `pxctl` to inspect the underlying volume for our PVC.
+
+[,bash,role="execute"]
+----
+pxctl volume inspect $(oc get pvc px-pvc -o jsonpath='{.spec.volumeName}')
+
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ pxctl volume inspect $(oc get pvc px-pvc -o jsonpath='{.spec.volumeName}')
+        Volume                   :  882972500633515140
+        Name                     :  pvc-32bc4cb4-f91a-4c6f-b248-2a29290c5080
+        Size                     :  2.0 GiB
+        Format                   :  ext4
+        HA                       :  3
+        IO Priority              :  HIGH
+        Creation time            :  Oct 10 19:30:06 UTC 2024
+        Shared                   :  no
+        Status                   :  up
+        State                    :  detached
+        Labels                   :  repl=3,namespace=default,priority_io=high,pvc=px-pvc
+        Mount Options            :  discard
+        Reads                    :  0
+        Reads MS                 :  0
+        Bytes Read               :  0
+        Writes                   :  0
+        Writes MS                :  0
+        Bytes Written            :  0
+        IOs in progress          :  0
+        Bytes used               :  1.1 MiB
+        Replica sets on nodes:
+                Set 0
+                  Node           : 10.0.33.246
+                   Pool UUID     : 26bd0ec3-5132-4413-9fa4-cc1ca8ea416b
+                  Node           : 10.0.27.203
+                   Pool UUID     : f0069555-0c6a-49c5-84dd-ba1c18cc7624
+                  Node           : 10.0.27.102
+                   Pool UUID     : 316fb82a-0edd-47eb-a69b-9a96012b6613
+        Replication Status       :  Detached
+----
+
+Make the following observations in the inspect output:
+
+* **HA**: Shows the number of configured replicas for this volume.
+* **Labels**: Shows the name of the PVC associated with this volume.
+* **Replica sets on nodes**: Displays the Portworx nodes on which the volume is replicated.
+* **State**: Indicates whether the volume is currently "detached," meaning no applications are using the volume yet.

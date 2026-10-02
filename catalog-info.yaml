@@ -1,0 +1,44 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: portworx-deployment-configuration-rh1-2027
+  title: portworx-deployment-configuration-rh1-2027
+  description: " Migration of the existing Portworx Enterprise lab (pxe-rhdp-lab)
+    into the Publishing House workflow for Red Hat One 2027. This lab covers
+    Portworx Enterprise deployment and configuration on   OpenShift as a
+    vSAN/datastore replacement for OCP Virtualization environments. Scope: Kube
+    Datastore overview (KDS vs PXE), installing Portworx Enterprise via the OCP
+    Operator catalog,   managing storage and dynamic storage pools, deploying VM
+    workloads on RWX block storage, simulating node failover and storage
+    recovery, manual pool relocation, and auto-rebalancing
+    across   heterogeneous backends. Target audience: Red Hat field (SEs,
+    architects, sellers). Duration: approximately 2 hours."
+  annotations:
+    ph.rhdp.io/content-type: lab
+    ph.rhdp.io/deployment-mode: rhdp_published
+    ph.rhdp.io/github-user: rickgcv
+    ph.rhdp.io/owner: rgarciac@redhat.com
+    ph.rhdp.io/migrated-repo: https://github.com/PureStorage-OpenConnect/pxe-rhdp-lab
+    backstage.io/techdocs-ref: dir:.
+    github.com/project-slug: rhpds/portworx-deployment-configuration-rh1-2027
+    ph.rhdp.io/created-at: 2026-10-02T11:01:13.581Z
+  tags:
+    - publishing-house
+    - lab
+    - rhdp-published
+    - migration
+  links:
+    - url: https://github.com/rhpds/portworx-deployment-configuration-rh1-2027
+      title: Repository
+      icon: github
+    - url: https://devspaces.apps.ocpv-infra02.wdc07.infra.demo.redhat.com#https://github.com/rhpds/portworx-deployment-configuration-rh1-2027
+      title: Open in DevSpaces
+      icon: catalog
+    - url: https://central-api-publishing-house.apps.ocpv-infra02.wdc07.infra.demo.redhat.com
+      title: Central
+      icon: dashboard
+spec:
+  type: content
+  lifecycle: experimental
+  owner: rhdp-team
+  system: publishing-house

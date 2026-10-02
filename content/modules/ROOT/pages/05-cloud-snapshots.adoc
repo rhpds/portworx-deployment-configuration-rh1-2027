@@ -1,0 +1,309 @@
+= Lab 05 - Cloud Snapshots
+
+
+== Introduction
+
+In this lab, you will learn how to create cloud snapshots for stateful applications using Portworx and Minio as the object storage solution. Cloud snapshots provide a way to backup data in a scalable and reliable manner, allowing for efficient data recovery. This lab walks you through deploying Minio as the target for cloud snapshots, provisioning a MySQL database, taking cloud snapshots, and restoring from those snapshots.
+
+== Deploy Minio as Target for Portworx Cloud Snapshots
+
+To begin, we need to deploy Minio as our object store endpoint for Portworx cloud snapshots. First, we will create a StorageClass for Minio.
+
+Create a StorageClass for use by Minio:
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc create -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: px-ha-sc
+provisioner: pxd.portworx.com
+parameters:
+  repl: "3"
+  io_priority: "high"
+  group: "minio"
+EOF
+----
+
+Next, deploy Minio onto the OCP cluster:
+
+[,bash,role="execute"]
+----
+echo "Installing Helm"
+curl -L https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash -s -- --version v3.8.2
+helm repo add stable https://charts.helm.sh/stable
+echo "Helm installed!"
+----
+
+[,bash,role="execute"]
+----
+echo "Setting Up Minio"
+oc create namespace minio
+oc -n minio adm policy add-scc-to-user anyuid -z px-minio
+helm install px-minio stable/minio --namespace minio --set accessKey=ZZYYXXWWVVUUTT --set secretKey=0ldSup3rS3cr3t --set persistence.storageClass=px-ha-sc --set resources.requests.memory=1Gi > /dev/null 2>&1
+oc -n minio adm policy add-scc-to-user anyuid -z px-minio
+until [[ `oc -n minio get pods | grep px-minio | grep Running | grep 1/1 | wc -l` -eq 1 ]]; do echo "Waiting for px-minio to be ready...."; sleep 1 ;done
+echo "Setup Complete ..."
+----
+
+Run the command below to obtain the object store endpoint. This may take a few moments to complete.
+
+[,bash,role="execute"]
+----
+MINIO_ENDPOINT=http://$(oc -n minio get svc px-minio -o jsonpath='{.spec.clusterIP}:9000'); echo $MINIO_ENDPOINT
+pxctl credentials create --provider s3 --s3-access-key ZZYYXXWWVVUUTT --s3-secret-key 0ldSup3rS3cr3t --s3-endpoint $MINIO_ENDPOINT --s3-region us-east-1 my-cloud-credentials
+----
+
+== Provision MySQL Database
+
+We will now create a MySQL database to use with cloud snapshots.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc create -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: px-mysql-sc
+provisioner: pxd.portworx.com
+parameters:
+  repl: "3"
+  io_profile: "db"
+  io_priority: "high"
+---
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: px-mysql-pvc
+spec:
+  storageClassName: px-mysql-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      schedulerName: stork
+      containers:
+      - name: mysql
+        image: mysql:5.6
+        imagePullPolicy: "Always"
+        env:
+        - name: MYSQL_ALLOW_EMPTY_PASSWORD
+          value: "1"
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: mysql-data
+      volumes:
+      - name: mysql-data
+        persistentVolumeClaim:
+          claimName: px-mysql-pvc
+EOF
+----
+
+Wait for the MySQL pod to start:
+
+[,bash,role="execute"]
+----
+oc get pods -l app=mysql -w
+----
+
+[source,bash]
+----
+NAME                    READY   STATUS    RESTARTS   AGE
+mysql-68ffdf6fc-vjl9r   1/1     Running   0          51s
+----
+
+Create a database named `demodb`:
+
+[,bash,role="execute"]
+----
+oc exec -it $(oc get pods -l app=mysql | grep Running | grep 1/1 | awk '{print $1}') -- mysql -u root -e "CREATE DATABASE demodb"
+----
+
+== Take Cloud Snapshot
+
+We have deployed a MySQL pod that uses a Portworx volume. Now, take a cloud snapshot of this PVC named `mysql-snapshot`. The snapshot should be successfully backed up to the object store.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: volumesnapshot.external-storage.k8s.io/v1
+kind: VolumeSnapshot
+metadata:
+  name: mysql-snapshot
+  namespace: default
+  annotations:
+    portworx/snapshot-type: cloud
+spec:
+  persistentVolumeClaimName: px-mysql-pvc
+EOF
+----
+
+If the cloud credentials and volume snapshot were set up correctly, you can check the status by running the command below:
+
+[,bash,role="execute"]
+----
+oc describe stork-volumesnapshot mysql-snapshot
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc describe stork-volumesnapshot mysql-snapshot
+Name:         mysql-snapshot
+Namespace:    default
+Labels:       SnapshotMetadata-PVName=pvc-5a0e1e4b-627e-492d-8c11-b8120131b022
+              SnapshotMetadata-Timestamp=1728593206100508730
+Annotations:  portworx/snapshot-type: cloud
+API Version:  volumesnapshot.external-storage.k8s.io/v1
+Kind:         VolumeSnapshot
+Metadata:
+  Creation Timestamp:  2024-10-10T20:46:46Z
+  Generation:          2
+  Resource Version:    99379
+  UID:                 132c6fc5-f9d6-4c23-8e28-1695b235a08f
+Spec:
+  Persistent Volume Claim Name:  px-mysql-pvc
+  Snapshot Data Name:            
+Status:
+  Conditions:          <nil>
+  Creation Timestamp:  <nil>
+Events:                <none>
+----
+
+== Clone PVC
+
+Create a clone PVC named `px-mysql-clone-pvc` by restoring data from the snapshot `mysql-snapshot`.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: px-mysql-clone-pvc
+  annotations:
+    snapshot.alpha.kubernetes.io/snapshot: mysql-snapshot
+spec:
+  accessModes:
+     - ReadWriteOnce
+  storageClassName: stork-snapshot-sc
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+----
+
+You can check the status of the clone by running the following command:
+
+[,bash,role="execute"]
+----
+oc describe pvc px-mysql-clone-pvc
+----
+
+[,bash,role="execute"]
+----
+Name:          px-mysql-clone-pvc
+Namespace:     default
+StorageClass:  stork-snapshot-sc
+Status:        Pending
+Volume:        
+Labels:        <none>
+Annotations:   snapshot.alpha.kubernetes.io/snapshot: mysql-snapshot
+               volume.beta.kubernetes.io/storage-provisioner: stork-snapshot
+               volume.kubernetes.io/storage-provisioner: stork-snapshot
+Finalizers:    [kubernetes.io/pvc-protection]
+Capacity:      
+Access Modes:  
+VolumeMode:    Filesystem
+Used By:       <none>
+Events:
+  Type    Reason                Age   From                                                                       Message
+  ----    ------                ----  ----                                                                       -------
+  Normal  Provisioning          7s    stork-snapshot_stork-9d7ddf748-wwscs_e84e6efa-0f6d-411a-b664-0452fbba2bd2  External provisioner is provisioning volume for claim "default/px-mysql-clone-pvc"
+  Normal  ExternalProvisioning  7s    persistentvolume-controller                                                Waiting for a volume to be created either by the external provisioner 'stork-snapshot' or manually by the system administrator. If volume creation is delayed, please verify that the provisioner is running and correctly registered.
+----
+
+Now that we have created a clone PVC, we can deploy a new MySQL pod using the cloned data.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc create -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-clone
+spec:
+  selector:
+    matchLabels:
+      app: mysql-clone
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mysql-clone
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.6
+        env:
+        - name: MYSQL_ALLOW_EMPTY_PASSWORD
+          value: "1"
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - mountPath: /var/lib/mysql
+          name: mysql-data
+      volumes:
+      - name: mysql-data
+        persistentVolumeClaim:
+          claimName: px-mysql-clone-pvc
+EOF
+----
+
+Wait for the new MySQL pod to start, and then verify that it is running:
+
+[,bash,role="execute"]
+----
+oc get pods -l app=mysql-clone -w
+----
+
+Once the pod is running, you can check that the data has been restored by connecting to the MySQL instance and verifying that the demodb database exists:
+
+[,bash,role="execute"]
+----
+oc exec -it $(oc get pods -l app=mysql-clone | grep Running | awk '{print $1}') -- mysql -u root -e "SHOW DATABASES;"
+----
+
+[,bash,role="execute"]
+----
++--------------------+
+| Database           |
++--------------------+
+| information_schema |
+| demodb             |
+| mysql              |
+| performance_schema |
++--------------------+
+----
+
+== Summary
+
+In this lab, you successfully deployed Minio as an object store for Portworx cloud snapshots. You also created a MySQL database with persistent storage, took a cloud snapshot, and restored the data by creating a clone PVC. These steps demonstrate the power of Portworx cloud snapshots for efficient data backup and recovery in Kubernetes environments.

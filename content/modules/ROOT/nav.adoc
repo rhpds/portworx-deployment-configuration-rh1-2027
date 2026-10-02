@@ -1,0 +1,14 @@
+* xref:01-explore-rhdp.adoc[1. Explore Redhat Openshift and Portworx]
+
+* xref:02-review-ocp-storage.adoc[2. Review OpenShift Storage]
+
+* xref:03-apache-cassandra.adoc[3. Snapshots with Cassandra]
+
+* xref:04-shared-volumes.adoc[4. Working with shared volumes]
+
+* xref:05-cloud-snapshots.adoc[5. Cloud Snapshots]
+
+* xref:06-snapshot-schedules.adoc[6. Creating Snapshot Schedules]
+
+* xref:07-autopilot.adoc[7. Automated capacity management]
+

@@ -1,0 +1,390 @@
+= Lab 04 - Shared Volumes
+
+In this section, we will create a Portworx volume (PVC) for NGINX.
+
+== Why NGINX?
+
+In this lab, we are using NGINX to demonstrate how shared volumes can be utilized to deploy and scale stateless applications. NGINX is an ideal example for testing the behavior of shared volumes, as its data must remain consistent across multiple instances. This approach will help us understand how Portworx shared volumes work in an OpenShift environment.
+
+== Create StorageClass
+
+Take a look at the StorageClass definition for Portworx and create the storage class.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+    name: px-shared-sc
+provisioner: pxd.portworx.com
+parameters:
+   repl: "3"
+   sharedv4: "true"
+EOF
+----
+
+The parameters are declarative policies for your storage volume. See https://docs.portworx.com/manage/volumes.html[here] for a full list of supported parameters. In our case, the key parameter is `sharedv4 = true`.
+
+== Create PersistentVolumeClaim
+
+Take a look at the PersistentVolumeClaim and create it.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+   name: px-shared-pvc
+spec:
+  storageClassName: px-shared-sc
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+----
+
+Now that we have the volume created, let's deploy a few NGINX instances and see how the shared volume works!
+
+In this step, we will deploy the NGINX application using the `PersistentVolumeClaim` created before.
+
+[NOTE]
+
+====
+Notice in the specification below, we have set the `securityContext.seLinuxOptions`. Without this setting, the pods may be assigned random SELinux labels, in which case only the last pod to come online would have access to the shared volume.
+====
+
+== Deploy 3 Instances of NGINX
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp1
+  labels:
+    app: webapp1
+spec:
+  selector:
+    matchLabels:
+      app: webapp1
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: webapp1
+        group: webapp
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seLinuxOptions:
+          level: "s0:c1,c0"
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: webapp1
+        securityContext:
+          allowPrivilegeEscalation: false
+          seLinuxOptions:
+            level: "s0:c1,c0"
+          capabilities:
+            drop: ["ALL"]
+        image: nginxinc/nginx-unprivileged
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: shared-data
+      volumes:
+      - name: shared-data
+        persistentVolumeClaim:
+          claimName: px-shared-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp2
+  labels:
+    app: webapp2
+spec:
+  selector:
+    matchLabels:
+      app: webapp2
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: webapp2
+        group: webapp
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seLinuxOptions:
+          level: "s0:c1,c0"
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: webapp2
+        securityContext:
+          allowPrivilegeEscalation: false
+          seLinuxOptions:
+            level: "s0:c1,c0"
+          capabilities:
+            drop: ["ALL"]
+        image: nginxinc/nginx-unprivileged
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: shared-data
+      volumes:
+      - name: shared-data
+        persistentVolumeClaim:
+          claimName: px-shared-pvc
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: webapp3
+  labels:
+    app: webapp3
+spec:
+  selector:
+    matchLabels:
+      app: webapp3
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: webapp3
+        group: webapp
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seLinuxOptions:
+          level: "s0:c1,c0"
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: webapp3
+        securityContext:
+          allowPrivilegeEscalation: false
+          seLinuxOptions:
+            level: "s0:c1,c0"
+          capabilities:
+            drop: ["ALL"]
+        image: nginxinc/nginx-unprivileged
+        ports:
+        - containerPort: 8080
+        volumeMounts:
+        - mountPath: /usr/share/nginx/html
+          name: shared-data
+      volumes:
+      - name: shared-data
+        persistentVolumeClaim:
+          claimName: px-shared-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp1-svc
+  labels:
+    app: webapp1
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: webapp1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp2-svc
+  labels:
+    app: webapp2
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: webapp2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: webapp3-svc
+  labels:
+    app: webapp3
+spec:
+  ports:
+  - port: 80
+    targetPort: 8080
+  selector:
+    app: webapp3
+EOF
+----
+
+Observe the `volumeMounts` and `volumes` sections where we mount the PVC.
+
+== Verify NGINX Pods Are Ready
+
+Run the command below and wait until all three NGINX pods are in a ready state.
+
+[,bash,role="execute"]
+----
+oc get pods -l group=webapp -o wide -w
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc get pods -l group=webapp -o wide -w
+NAME                       READY   STATUS    RESTARTS   AGE   IP            NODE                                        NOMINATED NODE   READINESS GATES
+webapp1-859866d87f-krlqb   1/1     Running   0          11s   10.129.2.22   ip-10-0-27-102.us-east-2.compute.internal   <none>           <none>
+webapp2-58dbb79577-zpkll   1/1     Running   0          11s   10.129.2.21   ip-10-0-27-102.us-east-2.compute.internal   <none>           <none>
+webapp3-84c66fdf75-tmkbr   1/1     Running   0          11s   10.129.2.23   ip-10-0-27-102.us-east-2.compute.internal   <none>           <none>
+----
+
+When all three pods are in the `Running` state, press `ctrl-c` to clear the screen. Be patient. If they stay in the `Pending` state for a while, it is because each node must fetch the Docker image.
+
+== Inspect the Portworx Volume
+
+Portworx ships with a https://docs.portworx.com/control/status.html[pxctl] command line tool that can be used to manage Portworx.
+
+Below, we will use `pxctl` to inspect the underlying volume for our PVC.
+
+[,bash,role="execute"]
+----
+pxctl volume inspect $(oc get pvc px-shared-pvc -o jsonpath='{.spec.volumeName}')
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ pxctl volume inspect $(oc get pvc px-shared-pvc -o jsonpath='{.spec.volumeName}')
+        Volume                   :  1019143768554792302
+        Name                     :  pvc-631e1d4c-e84b-4cf5-acdf-645645ecfbbb
+        Size                     :  1.0 GiB
+        Format                   :  ext4
+        HA                       :  3
+        IO Priority              :  LOW
+        Creation time            :  Oct 10 20:29:27 UTC 2024
+        Shared                   :  v4 (service)
+        Status                   :  up
+        State                    :  Attached: 126e9f0c-9c6b-4f84-a770-362a968cd9b0 (10.0.27.102)
+        Last Attached            :  Oct 10 20:29:57 UTC 2024
+        Device Path              :  /dev/pxd/pxd1019143768554792302
+        Labels                   :  namespace=default,pvc=px-shared-pvc,repl=3,sharedv4=true
+        Mount Options            :  discard
+        Sharedv4 Client Mount Options            :  soft,timeo=600,vers=4.0,actimeo=60,port=2049,proto=tcp,retrans=4
+        Reads                    :  17
+        Reads MS                 :  8
+        Bytes Read               :  69632
+        Writes                   :  32
+        Writes MS                :  59
+        Bytes Written            :  16879616
+        IOs in progress          :  0
+        Bytes used               :  636 KiB
+        Replica sets on nodes:
+                Set 0
+                  Node           : 10.0.33.246
+                   Pool UUID     : 26bd0ec3-5132-4413-9fa4-cc1ca8ea416b
+                  Node           : 10.0.27.203
+                   Pool UUID     : f0069555-0c6a-49c5-84dd-ba1c18cc7624
+                  Node           : 10.0.27.102
+                   Pool UUID     : 316fb82a-0edd-47eb-a69b-9a96012b6613
+        Replication Status       :  Up
+        Volume consumers         : 
+                - Name           : webapp1-859866d87f-krlqb (2484bf36-e52f-45aa-be47-7e7f435aab2c) (Pod)
+                  Namespace      : default
+                  Running on     : ip-10-0-27-102.us-east-2.compute.internal
+                  Controlled by  : webapp1-859866d87f (ReplicaSet)
+                - Name           : webapp2-58dbb79577-zpkll (c2e9f70d-c0f7-4a7b-b236-5bc453b7d63c) (Pod)
+                  Namespace      : default
+                  Running on     : ip-10-0-27-102.us-east-2.compute.internal
+                  Controlled by  : webapp2-58dbb79577 (ReplicaSet)
+                - Name           : webapp3-84c66fdf75-tmkbr (9d05d528-7c79-45c9-9d76-b36748221181) (Pod)
+                  Namespace      : default
+                  Running on     : ip-10-0-27-102.us-east-2.compute.internal
+                  Controlled by  : webapp3-84c66fdf75 (ReplicaSet)
+----
+
+* `Status`: Indicates that the volume is attached and shows the node on which it is attached. For shared volumes, this is the transaction coordinator node that all other nodes use to write data.
+* `HA`: Displays the number of configured replicas for this volume (shared volumes can also be replicated; you can test this by modifying the storage class in step 2).
+* `Shared`: Shows if the volume is shared.
+* `IO Priority`: Displays the relative priority of the volume's IO (high, medium, or low).
+* `Volume consumers`: Shows which pods are accessing the volume.
+
+With our shared volume successfully created and mounted across all three NGINX containers, we can now write data into the `html` folder of NGINX and verify that all three containers can read the data.
+
+== Confirm Our NGINX Servers Are Up
+
+Run the following command:
+
+[,bash,role="execute"]
+----
+oc run test-webapp1 --image nginx --restart=Never --rm -ti -- curl webapp1-svc
+----
+
+You should see the following:
+
+[source,html]
+----
+<html>
+<head><title>403 Forbidden</title></head>
+<body bgcolor="white">
+<center><h1>403 Forbidden</h1></center>
+<hr><center>nginx/xxx</center>
+</body>
+</html>
+----
+
+== Create `index.html` in the NGINX HTML Folder on `webapp1`
+
+Copy `index.html` into the `webapp1` pod:
+
+[,bash,role="execute"]
+----
+cat <<"EOF" > /tmp/index.html
+ /$$$$$$$                       /$$
+| $$__  $$                     | $$
+| $$  \ $$ /$$$$$$   /$$$$$$  /$$$$$$   /$$  /$$  /$$  /$$$$$$   /$$$$$$  /$$   /$$
+| $$$$$$$//$$__  $$ /$$__  $$|_  $$_/  | $$ | $$ | $$ /$$__  $$ /$$__  $$|  $$ /$$/
+| $$____/| $$  \ $$| $$  \__/  | $$    | $$ | $$ | $$| $$  \ $$| $$  \__/ \  $$$$/
+| $$     | $$  | $$| $$        | $$ /$$| $$ | $$ | $$| $$  | $$| $$        >$$  $$
+| $$     |  $$$$$$/| $$        |  $$$$/|  $$$$$/$$$$/|  $$$$$$/| $$       /$$/\  $$
+|__/      \______/ |__/         \___/   \_____/\___/  \______/ |__/      |__/  \__/
+EOF
+----
+
+[,bash,role="execute"]
+----
+POD=$(oc get pods -l app=webapp1 | grep Running | awk '{print $1}')
+oc cp /tmp/index.html $POD:/usr/share/nginx/html/index.html
+----
+
+Now, let's access all three URLs and verify that the "Hello World" message appears on each. This happens because all three containers are attached to the same volume, so any updates made to one are reflected across all.
+
+[,bash,role="execute"]
+----
+oc run test-webapp1 --image nginx --restart=Never --rm -ti -- curl webapp1-svc
+----
+
+[,bash,role="execute"]
+----
+oc run test-webapp2 --image nginx --restart=Never --rm -ti -- curl webapp2-svc
+----
+
+[,bash,role="execute"]
+----
+oc run test-webapp3 --image nginx --restart=Never --rm -ti -- curl webapp3-svc
+----
+
+== Summary
+
+Congratulations! You have successfully created a shared volume using Portworx and deployed multiple NGINX instances to demonstrate how data consistency is maintained across multiple pods. We verified that each instance of NGINX can access the same shared data, showcasing the power of shared storage in an OpenShift environment.
+
+With our shared volumes successfully created and mounted across all three NGINX containers, we were able to modify the html folder of webapp1, and see the changes reflected in all NGINX instances. This demonstrated how shared volumes facilitate consistent data across multiple application pods.

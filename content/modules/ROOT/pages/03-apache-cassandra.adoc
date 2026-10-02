@@ -1,0 +1,392 @@
+= Lab 03 - Managing Appache Casandara with Portworx Snapshots
+
+== Understanding Apache Cassandra
+Apache Cassandra is a distributed NoSQL database designed to manage large amounts of data across multiple servers, providing high availability and fault tolerance. It ensures there is no single point of failure by spreading data evenly across the servers in the network.
+
+== Understanding 3DSnap
+
+A `3DSnap` (Three-Dimensional Snapshot) allows you to take consistent snapshots across multiple volumes in your cluster simultaneously. This is particularly useful for distributed applications like Cassandra, which use multiple volumes for their data.
+
+By using 3DSnap, you can ensure that all volumes in a Cassandra cluster are snapped at the exact same point in time. This guarantees consistency across the entire dataset, making recovery easier and preventing issues that can arise from having data at different points in time. This level of consistency is crucial for proper recovery or cloning of the cluster.
+
+To enable this feature in a production environment, you would add the `fg=true` parameter to your `StorageClass`, which ensures that Portworx places each volume and its replicas on separate nodes. This prevents a failover scenario where volumes might end up on the same node, thus improving reliability and performance.
+
+
+In this lab, we'll deploy Cassandra on OpenShift using Portworx for dynamic storage provisioning.
+
+== Step 1: Create a Portworx Volume for Cassandra
+
+Before deploying Cassandra, we need to create a Portworx `PersistentVolumeClaim` (PVC).
+
+To do that, we first need a StorageClass, which defines the type of storage available.
+
+=== Create StorageClass
+
+Take a look at the storage class configuration below:
+
+- The replication factor (`repl`) is set to 2 to ensure high availability and accelerate Cassandra node recovery.
+- The `group` parameter is used to create a group name for Cassandra, allowing for consistent https://docs.portworx.com/portworx-install-with-kubernetes/storage-operations/create-snapshots/snaps-3d/[3DSnaps] across the cluster.
+- In a larger production cluster, you would also add the parameter `fg=true` to ensure that Portworx places each Cassandra volume and its replicas on separate nodes, avoiding a scenario where Cassandra fails over to a node where it already runs.
+
+NOTE: For a 3-volume group and 2 replicas, a minimum of 6 worker nodes is required to ensure redundancy.
+
+Create the storage class using:
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: px-storageclass
+provisioner: pxd.portworx.com
+parameters:
+  repl: "2" # Sets replication factor
+  priority_io: "high" # Prioritizes I/O for critical operations
+  group: "cassandra_vg" # Volume group name for 3DSnap consistency
+EOF
+----
+
+Now that we have the StorageClass created, let's deploy Cassandra.
+
+== Step 2: Deploy Cassandra StatefulSet
+
+In this step, we will deploy a 3-node Cassandra application using a `StatefulSet`. To learn more about StatefulSets, see https://docs.openshift.com/container-platform/4.16/rest_api/workloads_apis/statefulset-apps-v1.html[here].
+
+=== Create the Cassandra StatefulSet
+
+First, let's configure our Security Context Contraints to allow `anyuid`
+
+[,bash,role="execute"]
+----
+oc adm policy add-scc-to-user anyuid -z default -n default
+oc adm policy add-scc-to-user privileged -z default -n default
+----
+
+Create a Cassandra `StatefulSet` that uses a Portworx PVC.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: cassandra
+  name: cassandra
+spec:
+  clusterIP: None # Headless service for StatefulSet
+  ports:
+    - port: 9042 # Cassandra query language port
+  selector:
+    app: cassandra
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: cassandra
+spec:
+  serviceName: cassandra
+  replicas: 1 # Start with a single replica
+  selector:
+    matchLabels:
+      app: cassandra
+  template:
+    metadata:
+      labels:
+        app: cassandra
+    spec:
+      schedulerName: stork # Use stork scheduler for efficient placement
+      terminationGracePeriodSeconds: 1800 # Graceful termination for Cassandra
+      containers:
+      - name: cassandra
+        image: gcr.io/google-samples/cassandra:v14
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 7000
+          name: intra-node
+        - containerPort: 7001
+          name: tls-intra-node
+        - containerPort: 7199
+          name: jmx
+        - containerPort: 9042
+          name: cql
+        resources:
+          limits:
+            cpu: "500m"
+            memory: 1Gi
+          requests:
+            cpu: "500m"
+            memory: 1Gi
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+              - IPC_LOCK
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "PID=\$(pidof java) && kill \$PID && while ps -p \$PID > /dev/null; do sleep 1; done"] # Graceful shutdown
+        env:
+          - name: MAX_HEAP_SIZE
+            value: 512M
+          - name: HEAP_NEWSIZE
+            value: 100M
+          - name: CASSANDRA_SEEDS
+            value: "cassandra-0.cassandra.default.svc.cluster.local"
+          - name: CASSANDRA_CLUSTER_NAME
+            value: "K8Demo"
+          - name: CASSANDRA_DC
+            value: "DC1-K8Demo"
+          - name: CASSANDRA_RACK
+            value: "Rack1-K8Demo"
+          - name: CASSANDRA_AUTO_BOOTSTRAP
+            value: "false"
+          - name: POD_IP
+            valueFrom:
+              fieldRef:
+                fieldPath: status.podIP
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - ls
+          initialDelaySeconds: 15
+          timeoutSeconds: 5
+        volumeMounts:
+        - name: cassandra-data
+          mountPath: /cassandra_data
+  volumeClaimTemplates:
+  - metadata:
+      name: cassandra-data
+    spec:
+      storageClassName: px-storageclass # Reference to the Portworx StorageClass
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cqlsh
+spec:
+  containers:
+  - name: cqlsh
+    image: mikewright/cqlsh
+    command:
+      - sh
+      - -c
+      - "exec tail -f /dev/null"
+---
+apiVersion: stork.libopenstorage.org/v1alpha1
+kind: Rule
+metadata:
+  name: cassandra-presnap-rule
+rules:
+  - podSelector:
+      app: cassandra
+    actions:
+    - type: command
+      value: nodetool flush
+EOF
+----
+
+The above configuration uses a headless service to expose the StatefulSet.
+PVCs are dynamically created for each member of the StatefulSet based on `volumeClaimTemplates`.
+
+== Step 3: Verify Cassandra Pod is Ready
+
+To monitor the Cassandra pod until it's ready, use the following command:
+
+[,bash,role="execute"]
+----
+watch oc get pods -o wide
+----
+
+[,bash,role="execute"]
+----
+Every 2.0s: oc get pods -o wide                             showroom-5c744474d5-nw6x2: Thu Oct 10 20:14:03 2024
+
+NAME          READY   STATUS    RESTARTS   AGE   IP            NODE                                        NOMI
+NATED NODE   READINESS GATES
+cassandra-0   1/1     Running   0          42s   10.128.2.28   ip-10-0-33-246.us-east-2.compute.internal   <non
+e>           <none>
+cqlsh         1/1     Running   0          42s   10.131.0.29   ip-10-0-27-203.us-east-2.compute.internal   <non
+e>           <none>
+----
+
+This may take a few minutes. When the `cassandra-0` pod is in `STATUS Running` and `READY 1/1`, hit `ctrl-c` to exit.
+
+== Step 4: Inspect the Portworx Volume
+
+Next, inspect the underlying volumes for our Cassandra pod:
+
+[,bash,role="execute"]
+----
+pxctl volume inspect $(oc get pvc | grep cassandra | awk '{print $3}')
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ pxctl volume inspect $(oc get pvc | grep cassandra | awk '{print $3}')
+        Volume                   :  1131154436557386643
+        Name                     :  pvc-a92c1cb5-82b4-4482-a395-a17d5fcd11be
+        Group                    :  cassandra_vg
+        Size                     :  1.0 GiB
+        Format                   :  ext4
+        HA                       :  2
+        IO Priority              :  HIGH
+        Creation time            :  Oct 10 20:13:22 UTC 2024
+        Shared                   :  no
+        Status                   :  up
+        State                    :  Attached: fc6d58ac-c584-4b2d-a5c1-4cdd4ec273a2 (10.0.33.246)
+        Last Attached            :  Oct 10 20:13:23 UTC 2024
+        Device Path              :  /dev/pxd/pxd1131154436557386643
+        Labels                   :  namespace=default,priority_io=high,pvc=cassandra-data-cassandra-0,repl=2,app=cassandra,group=cassandra_vg
+        Mount Options            :  discard
+        Reads                    :  17
+        Reads MS                 :  3
+        Bytes Read               :  69632
+        Writes                   :  991
+        Writes MS                :  651
+        Bytes Written            :  29532160
+        IOs in progress          :  0
+        Bytes used               :  624 KiB
+        Replica sets on nodes:
+                Set 0
+                  Node           : 10.0.33.246
+                   Pool UUID     : 26bd0ec3-5132-4413-9fa4-cc1ca8ea416b
+                  Node           : 10.0.27.203
+                   Pool UUID     : f0069555-0c6a-49c5-84dd-ba1c18cc7624
+        Replication Status       :  Up
+        Volume consumers         : 
+                - Name           : cassandra-0 (496b1df3-f87d-4091-a500-819ee6e05e01) (Pod)
+                  Namespace      : default
+                  Running on     : ip-10-0-33-246.us-east-2.compute.internal
+                  Controlled by  : cassandra (StatefulSet)
+----
+
+Look for:
+
+* **`State`**: Indicates the volume is attached and shows the node.
+* **`HA`**: Number of configured replicas.
+* **`Labels`**: PVC name associated with the volume.
+* **`Replica sets on nodes`**: Portworx nodes with volume replicas.
+
+
+== Step 5: Create a Table and Insert Data
+
+Start a CQL Shell session:
+
+[,bash,role="execute"]
+----
+oc exec -it cqlsh -- cqlsh cassandra-0.cassandra.default.svc.cluster.local --cqlversion=3.4.4
+----
+
+NOTE: If you receive a traceback error, the Cassandra pod might not be ready yet. Wait a few seconds and try again.
+
+Create a keyspace and insert some data:
+
+[,sql,role="execute"]
+----
+CREATE KEYSPACE portworx WITH REPLICATION = {'class':'SimpleStrategy','replication_factor':3};
+USE portworx;
+CREATE TABLE features (id varchar PRIMARY KEY, name varchar, value varchar);
+INSERT INTO portworx.features (id, name, value) VALUES ('px-1', 'snapshots', 'point in time recovery!');
+INSERT INTO portworx.features (id, name, value) VALUES ('px-2', 'cloudsnaps', 'backup/restore to/from any cloud!');
+INSERT INTO portworx.features (id, name, value) VALUES ('px-3', 'STORK', 'convergence, scale, and high availability!');
+----
+
+Type `quit` in the cqlsh shell to exit back to the lab-user terminal
+
+== Step 6: Flush Data to Disk
+
+[,bash,role="execute"]
+----
+oc exec -it cassandra-0 -- nodetool flush
+----
+
+Flushing data to disk ensures data persistence for failover tests.
+
+== Step 7: Simulate Node Failure and Verify Failover
+
+Cordon the node where Cassandra is running. You should a message that the node was cordoned once completed.
+
+[,bash,role="execute"]
+----
+oc adm cordon $(oc get pods -l app=cassandra -o jsonpath='{.items[0].spec.nodeName}')
+----
+
+
+Delete the Cassandra pod. After a few moments, you will get a mesage that the pod is deleted 
+
+[,bash,role="execute"]
+----
+oc delete pod $(oc get pods -l app=cassandra -o wide | awk 'NR>1 {print $1}')
+----
+
+This will cause Kubernetes to reschedule the pod on another node.
+
+To verify the new pod is running:
+
+[,bash,role="execute"]
+----
+oc get pods -l app=cassandra -o wide -w
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc get pods -l app=cassandra -o wide -w
+NAME          READY   STATUS    RESTARTS   AGE   IP            NODE                                        NOMINATED NODE   READINESS GATES
+cassandra-0   1/1     Running   0          58s   10.131.0.31   ip-10-0-27-203.us-east-2.compute.internal   <none>           <none>
+----
+
+Once the new pod is `Running` and `READY(1/1)`, press `ctrl-c` to exit.
+
+Uncordon the node:
+
+[,bash,role="execute"]
+----
+oc adm uncordon $(oc get pods -l app=cassandra -o jsonpath='{.items[0].spec.nodeName}')
+----
+
+== Step 8: Verify Data Availability After Failover
+
+Start a CQL Shell session again:
+
+[,bash,role="execute"]
+----
+oc exec -it cqlsh -- cqlsh cassandra-0.cassandra.default.svc.cluster.local --cqlversion=3.4.4
+----
+
+Select rows from the keyspace:
+
+[,sql,role="execute"]
+----
+SELECT id, name, value FROM portworx.features;
+----
+
+[,sql,role="execute"]
+----
+cqlsh> SELECT id, name, value FROM portworx.features;
+
+ id   | name       | value
+------+------------+--------------------------------------------
+ px-2 | cloudsnaps |          backup/restore to/from any cloud!
+ px-3 |      STORK | convergence, scale, and high availability!
+ px-1 |  snapshots |                    point in time recovery!
+
+(3 rows)
+cqlsh> 
+----
+
+Verify that the data is still present, which confirms that failover was successful.
+
+Log out of the CQL Shell session by pressing `Ctrl-C` typing `quit`
+

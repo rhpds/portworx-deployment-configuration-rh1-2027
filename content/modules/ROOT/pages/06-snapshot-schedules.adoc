@@ -1,0 +1,188 @@
+= Lab 06 - Snapshot Schedules
+
+== Introduction
+
+In this lab, we will learn how to create and manage snapshot schedules in OpenShift using Portworx. We will begin by creating a snapshot schedule policy to automate the creation of volume snapshots. Next, we will create a storage class that incorporates this snapshot schedule policy, ensuring that all Persistent Volume Claims (PVCs) created with this storage class have automated snapshots. Finally, we will deploy an NGINX StatefulSet that utilizes this storage class, automatically generating snapshots for the PVCs associated with the StatefulSet.
+
+== Create a New Snapshot Schedule Policy
+
+First, create a daily snapshot schedule policy named `daily-schedule` that takes a snapshot every day at `10 PM` and retains the last 5 snapshots.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: stork.libopenstorage.org/v1alpha1
+kind: SchedulePolicy
+metadata:
+  name: daily-schedule
+policy:
+  daily:
+    time: "10:00PM"
+    retain: 5
+EOF
+----
+
+Next, let's inpsect the policy
+
+[,bash,role="execute"]
+----
+oc describe schedulepolicy daily-schedule
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc describe schedulepolicy daily-schedule
+Name:         daily-schedule
+Namespace:    
+Labels:       <none>
+Annotations:  <none>
+API Version:  stork.libopenstorage.org/v1alpha1
+Kind:         SchedulePolicy
+Metadata:
+  Creation Timestamp:  2024-10-10T21:10:03Z
+  Generation:          1
+  Resource Version:    112147
+  UID:                 892192b9-3b3a-4c8b-a380-1e9e6af5940c
+Policy:
+  Daily:
+    Retain:  5
+    Time:    10:00PM
+Events:      <none>
+----
+
+== Create a Storage Class That Uses This Schedule Policy
+
+Next, create a storage class named `px-nginx-scheduled` that uses the newly created schedule policy `daily-schedule`.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: px-nginx-scheduled
+provisioner: pxd.portworx.com
+parameters:
+  repl: "2"
+  io_priority: "high"
+  snapshotschedule.stork.libopenstorage.org/default-schedule: |
+    schedulePolicyName: default-interval-schedule
+    annotations:
+      portworx/snapshot-type: local
+EOF
+----
+
+Let's inspect the storageclass
+
+[,bash,role="execute"]
+----
+oc describe  sc px-nginx-scheduled
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc describe  sc px-nginx-scheduled
+Name:            px-nginx-scheduled
+IsDefaultClass:  No
+Annotations:     kubectl.kubernetes.io/last-applied-configuration={"apiVersion":"storage.k8s.io/v1","kind":"StorageClass","metadata":{"annotations":{},"name":"px-nginx-scheduled"},"parameters":{"io_priority":"high","repl":"2","snapshotschedule.stork.libopenstorage.org/default-schedule":"schedulePolicyName: default-interval-schedule\nannotations:\n  portworx/snapshot-type: local\n"},"provisioner":"pxd.portworx.com"}
+
+Provisioner:  pxd.portworx.com
+Parameters:   io_priority=high,repl=2,snapshotschedule.stork.libopenstorage.org/default-schedule=schedulePolicyName: default-interval-schedule
+annotations:
+  portworx/snapshot-type: local
+
+AllowVolumeExpansion:  <unset>
+MountOptions:          <none>
+ReclaimPolicy:         Delete
+VolumeBindingMode:     Immediate
+Events:                <none>
+----
+
+
+
+== Create an NGINX StatefulSet That Utilizes This StorageClass
+
+Now, create a new NGINX StatefulSet, making use of the `px-nginx-scheduled` storage class.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx
+  labels:
+    app: nginx
+spec:
+  ports:
+  - port: 80
+    name: web
+  clusterIP: None
+  selector:
+    app: nginx
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: web-sched
+spec:
+  serviceName: "nginx"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: k8s.gcr.io/nginx-slim:0.8
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: www
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: www
+    spec:
+      storageClassName: px-nginx-scheduled
+      accessModes: [ "ReadWriteOnce" ]
+      resources:
+        requests:
+          storage: 1Gi
+EOF
+----
+
+Inspect the stateful set.  
+
+[,bash,role="execute"]
+----
+oc describe  sc px-nginx-scheduled
+----
+
+We've truncated the output here for brevity.
+
+[,bash,role="execute"]
+----
+lab-user: ~]$ oc describe  statefulset web-sched
+Name:               web-sched
+Namespace:          default
+CreationTimestamp:  Thu, 10 Oct 2024 21:10:16 +0000
+Selector:           app=nginx
+Labels:             <none>
+Annotations:        <none>
+Replicas:           2 desired | 2 total
+Update Strategy:    RollingUpdate
+  Partition:        0
+Pods Status:        2 Running / 0 Waiting / 0 Succeeded / 0 Failed
+----
+
+
+
+== Summary
+
+In this lab, we successfully created a snapshot schedule policy and applied it to a storage class. We then deployed an NGINX StatefulSet that automatically utilizes the snapshot scheduling capabilities of this storage class. As a result, the PVCs associated with the StatefulSet have automated daily snapshots, ensuring data protection and quick recovery if needed. 

@@ -1,0 +1,195 @@
+= Lab 01 - Explore OpenShift Cluster
+
+We will begin with a quick tour of the lab environment. This lab
+consists of a multi-node OpenShift cluster which has been deployed
+exclusively for you.
+
+This is a sandbox environment. Feel free to explore and experiment.
+
+== Red Hat OpenShift Container Platform Configuration Review
+
+Let's start by getting the nodes in our current cluster. Open the tab to access the bastion.
+
+[,bash,role="execute"]
+----
+oc get nodes
+----
+
+Example output
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc get nodes
+NAME                                        STATUS   ROLES                  AGE   VERSION
+ip-10-0-12-159.us-east-2.compute.internal   Ready    control-plane,master   55m   v1.29.8+f10c92d
+ip-10-0-27-102.us-east-2.compute.internal   Ready    worker                 48m   v1.29.8+f10c92d
+ip-10-0-27-203.us-east-2.compute.internal   Ready    worker                 48m   v1.29.8+f10c92d
+ip-10-0-33-246.us-east-2.compute.internal   Ready    worker                 48m   v1.29.8+f10c92d
+ip-10-0-43-121.us-east-2.compute.internal   Ready    control-plane,master   55m   v1.29.8+f10c92d
+ip-10-0-47-188.us-east-2.compute.internal   Ready    control-plane,master   55m   v1.29.8+f10c92d
+----
+
+This cluster has 3 control-plane nodes and 3 worker nodes.
+
+We can check the OpenShift version we are running with the
+following command.  Look for the line that reads `Server Version`
+
+[,bash,role="execute"]
+----
+oc version
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc version
+Client Version: 4.14.5
+Kustomize Version: v5.0.1
+Server Version: 4.16.15
+Kubernetes Version: v1.29.8+f10c92d
+----
+
+We can check the status of the cluster by running:
+
+[,bash,role="execute"]
+----
+oc cluster-info
+----
+
+[,bash,role="execute"]
+----
+lab-user: ~]$ oc cluster-info
+Kubernetes control plane is running at https://api.cluster-8d7kj.8d7kj.sandbox714.opentlc.com:6443
+----
+
+
+To further debug and diagnose cluster problems, use `kubectl cluster-info dump`.
+
+
+== Portworx Configuration Review
+
+Portworx Enterprise is already installed and running on this cluster. We
+will investigate the configuration in the next section.
+
+What does Portworx need to be installed?
+
+[arabic]
+. *Drives*:  Each node has the `/dev/nvme1n1` drive available for our use.
+. *Key Value Database (KVDB)*: Such as ETCD. We will be using the
+Portworx built-in KVDB instead of deploying our own.
+. *Specification*: Portworx is defined by a spec file, and we will create
+the Portworx cluster using the spec URL.
+
+To see the running Portworx pods:
+
+[,bash,role="execute"]
+----
+oc get pods -o wide -n portworx -l name=portworx
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ oc get pods -o wide -n portworx -l name=portworx
+NAME                             READY   STATUS    RESTARTS   AGE   IP            NODE                                        NOMINATED NODE   READINESS GATES
+portworx-storage-cluster-4xffj   1/1     Running   0          31m   10.0.27.102   ip-10-0-27-102.us-east-2.compute.internal   <none>           <none>
+portworx-storage-cluster-9fbrt   1/1     Running   0          31m   10.0.27.203   ip-10-0-27-203.us-east-2.compute.internal   <none>           <none>
+portworx-storage-cluster-zvl4q   1/1     Running   0          31m   10.0.33.246   ip-10-0-33-246.us-east-2.compute.internal   <none>           <none>
+----
+
+
+
+We can check the installation logs with the following command. This will check the last 50 lines of the log.
+
+[,bash,role="execute"]
+----
+oc -n portworx logs --tail=50 $(oc get pods -l name=portworx -n portworx -o jsonpath='{.items[0].metadata.name}') -c portworx
+----
+
+
+== Add PXCTL Alias
+
+Portworx ships with a
+https://docs.portworx.com/portworx-enterprise/reference/cli/pxctl-reference/status-reference[pxctl]
+command line tool that allows users to manage Portworx resources across the cluster.
+
+To make it easier to run `pxctl` commands, we will add an alias to the
+shell.
+
+First, echo the alias to the `.bashrc` file so it gets loaded automatically if you relogin to the terminal.
+
+[,bash,role="execute"]
+----
+echo 'alias pxctl="oc -n portworx exec $(oc get pods -l name=portworx -n portworx -o jsonpath='{.items[0].metadata.name}') -c portworx -it -- /opt/pwx/bin/pxctl"' >> ~/.bashrc
+----
+
+Next, use `source` to reload the .bashrc file
+
+----
+source ~/.bashrc
+----
+
+Take a moment to review the Portworx configuration by running the
+following command:
+
+[,bash,role="execute"]
+----
+pxctl status
+----
+
+[,bash,role="execute"]
+----
+[lab-user: ~]$ pxctl status
+Status: PX is operational
+Telemetry: Disabled or Unhealthy
+Metering: Disabled or Unhealthy
+License: Trial (expires in 31 days)
+Node ID: 126e9f0c-9c6b-4f84-a770-362a968cd9b0
+        IP: 10.0.27.102 
+        Local Storage Pool: 1 pool
+        POOL    IO_PRIORITY     RAID_LEVEL      USABLE  USED    STATUS  ZONE            REGION
+        0       HIGH            raid0           50 GiB  4.0 GiB Online  us-east-2a      us-east-2
+        Local Storage Devices: 1 device
+        Device  Path            Media Type              Size            Last-Scan
+        0:1     /dev/nvme1n1    STORAGE_MEDIUM_NVME     50 GiB          10 Oct 24 19:01 UTC
+        total                   -                       50 GiB
+        Cache Devices:
+         * No cache devices
+        Kvdb Device:
+        Device Path     Size
+        /dev/nvme2n1    32 GiB
+         * Internal kvdb on this node is using this dedicated kvdb device to store its data.
+Cluster Summary
+        Cluster ID: portworx-storage-cluster
+        Cluster UUID: c174f323-4ad8-4ecd-964e-0d579460b37e
+        Scheduler: kubernetes
+        Total Nodes: 3 node(s) with storage (3 online)
+        IP              ID                                      SchedulerNodeName                             Auth             StorageNode     Used    Capacity        Status  StorageStatus   Version         Kernel        OS
+        10.0.33.246     fc6d58ac-c584-4b2d-a5c1-4cdd4ec273a2    ip-10-0-33-246.us-east-2.compute.internal     Disabled Yes             4.0 GiB 50 GiB          Online  Up              3.1.6.0-4ad9804 5.14.0-427.37.1.el9_4.x86_64   Red Hat Enterprise Linux CoreOS 416.94.202409191851-0
+        10.0.27.203     31775e5a-714a-4106-aff5-d1fad08300c1    ip-10-0-27-203.us-east-2.compute.internal     Disabled Yes             4.0 GiB 50 GiB          Online  Up              3.1.6.0-4ad9804 5.14.0-427.37.1.el9_4.x86_64   Red Hat Enterprise Linux CoreOS 416.94.202409191851-0
+        10.0.27.102     126e9f0c-9c6b-4f84-a770-362a968cd9b0    ip-10-0-27-102.us-east-2.compute.internal     Disabled Yes             4.0 GiB 50 GiB          Online  Up (This node)  3.1.6.0-4ad9804 5.14.0-427.37.1.el9_4.x86_64   Red Hat Enterprise Linux CoreOS 416.94.202409191851-0
+Global Storage Pool
+        Total Used      :  12 GiB
+        Total Capacity  :  150 GiB
+----
+
+
+
+Notice that our Portworx cluster is running on 3 nodes by findind the line that reads *Total Nodes*
+
+== OpenShift Web Console
+
+Next, let's take a quick look at the OpenShift Web console.
+
+NOTE: You will need to copy/paste the url into a new tab in your browser.
+
+* Web Console URL: `{openshift_console_url}`
+* Username: `{openshift_cluster_admin_username}`
+* Password: `{openshift_cluster_admin_password}`
+
+Once logged in, navigate to `Operators/Installed Operators`. Change your Project to `portworx`. You should see Portworx Enterprise installed with a status of **Succeeded**.
+
+image::01_01_operator.png[]
+
+Click on the `Portworx Enterprise` operator and then click `Storage Cluster`.
+
+`portworx-storage-cluster` should be in the **Running** phase.
+
+image::01_02_portworx-operator.png[]

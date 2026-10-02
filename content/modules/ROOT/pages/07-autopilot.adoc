@@ -1,0 +1,302 @@
+= Lab 07 - PVC Auto Resize using AutoPilot
+
+== Understanding Portworx Autopliot
+
+Portworx Autopilot automates the management of storage capacity and policies in Kubernetes environments. It intelligently monitors and takes actions to ensure that storage resources are optimized and always available, reducing manual intervention. Autopilot can help with storage provisioning, capacity scaling, and even handling specific actions when a storage volume reaches a defined threshold (e.g., adding more capacity to a volume or migrating data).
+
+In this exercise, we will explore how to dynamically manage the storage needs of a PostgreSQL deployment in OpenShift using Portworx and AutoPilot. We will create a PVC with volume expansion capabilities and deploy a PostgreSQL instance that uses this PVC. Additionally, we will implement an AutoPilot rule to automatically expand the volume when certain conditions are met, ensuring continuous operation without manual intervention or downtime. By the end of this lab, you will understand how to configure and verify automatic volume resizing, providing a robust solution for managing increasing storage demands.
+
+
+== Create StorageClass and PersistentVolumeClaim
+
+Take a look at the StorageClass definition for Portworx:
+
+[,bash,role="execute"]
+----
+oc delete sc px-repl3-sc
+cat <<EOF | oc apply -f -
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: px-repl3-sc
+provisioner: pxd.portworx.com
+parameters:
+  repl: "3"
+  io_profile: "db"
+  priority_io: "high"
+allowVolumeExpansion: true
+EOF
+----
+
+The parameters are declarative policies for your storage volume. Notice the `allowVolumeExpansion: true`; this is necessary for OpenShift volume expansion. See https://docs.portworx.com/portworx-install-with-kubernetes/storage-operations/create-pvcs/dynamic-provisioning/[here] for a full list of supported parameters.
+
+We also need to apply a ConfigMap to allow OpenShift's Prometheus instance to monitor Portworx events.
+
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+EOF
+----
+
+Create a new PersistentVolumeClaim:
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: px-postgres-pvc
+  labels:
+    app: postgres
+spec:
+  storageClassName: px-repl3-sc
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+----
+
+This defines the initial volume size. Portworx will thin provision the volume.
+
+== Create Secret for PostgreSQL
+
+Create a Secret to store the PostgreSQL password.
+
+[,bash,role="execute"]
+----
+oc create secret generic postgres-pass --from-file=password=<(echo -n mysql123)
+----
+
+== Deploy PostgreSQL
+
+Now that we have the volumes created, let’s deploy PostgreSQL!
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc create -f -
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      schedulerName: stork
+      containers:
+      - name: postgres
+        image: postgres:9.5
+        imagePullPolicy: "IfNotPresent"
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_USER
+          value: pgbench
+        - name: PGUSER
+          value: pgbench
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-pass
+              key: password
+        - name: PGBENCH_PASSWORD
+          value: superpostgres
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        volumeMounts:
+        - mountPath: /var/lib/postgresql/data
+          name: postgredb
+      volumes:
+      - name: postgredb
+        persistentVolumeClaim:
+          claimName: px-postgres-pvc
+EOF
+----
+
+Observe the `volumeMounts` and `volumes` sections where we mount the PVC.
+
+== Verify PostgreSQL Pod is Ready
+
+Below command will wait until the PostgreSQL pod is in the ready state.
+
+[,bash,role="execute"]
+----
+oc get pods -l app=postgres -o wide -w
+----
+
+When the pod is in the Running state, hit `ctrl-c` to exit.
+
+== Inspect the Portworx Volume
+
+Below we will use `pxctl` to inspect the underlying volume for our PVC.
+
+[,bash,role="execute"]
+----
+pxctl volume inspect $(oc get pvc | grep px-postgres-pvc | awk '{print $3}')
+----
+
+* `State`: Indicates that the volume is attached and shows the node on which it is attached. This is the node where the Kubernetes pod is running.
+* `HA`: Displays the number of configured replicas for this volume.
+* `Labels`: Shows the name of the PVC associated with this volume.
+* `Replica sets on nodes`: Displays the Portworx (px) nodes on which the volume is replicated.
+* `Size`: The size of the volume is 1GB. We'll check this later to verify if the volume has been expanded.
+
+== Configure AutoPilot Rule
+
+Now that we have PostgreSQL up, let's proceed to set up our AutoPilot rule!
+
+Learn more about https://2.11.docs.portworx.com/portworx-install-with-kubernetes/autopilot/how-to-use/working-with-rules/#understanding-an-autopilotrule[working with AutoPilot Rules] in the Portworx documentation.
+
+Keep in mind, an AutoPilot Rule has 4 main parts:
+
+* `Selector`: Matches labels on the objects that the rule should monitor.
+* `Namespace Selector`: Matches labels on the Kubernetes namespaces the rule should monitor. This is optional, and the default is all namespaces.
+* `Conditions`: The metrics for the objects to monitor.
+* `Actions`: The actions to perform once the metric conditions are met.
+
+Below we target the PostgreSQL PVC using an AutoPilot Rule.
+
+[,bash,role="execute"]
+----
+cat <<EOF | oc apply -f -
+apiVersion: autopilot.libopenstorage.org/v1alpha1
+kind: AutopilotRule
+metadata:
+  name: auto-volume-resize
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  conditions:
+    expressions:
+    - key: "100 * (px_volume_usage_bytes / px_volume_capacity_bytes)"
+      operator: Gt
+      values:
+        - "20"
+    - key: "px_volume_capacity_bytes / 1000000000"
+      operator: Lt
+      values:
+       - "20"
+  actions:
+  - name: openstorage.io.action.volume/resize
+    params:
+      scalepercentage: "200"
+EOF
+----
+
+The `condition` and `action` in the rule are defined such that when the volume is using more than `20%` of its total available capacity, it will grow the volume by `200%`. Normally, you would use a larger threshold for volume usage.
+
+== Verify AutoPilot Initialization
+
+[,bash,role="execute"]
+----
+oc get events --field-selector involvedObject.kind=AutopilotRule,involvedObject.name=auto-volume-resize --all-namespaces -w
+----
+
+Check that AutoPilot has recognized the PVC and initialized it. When the events show `transition from Initializing => Normal` for the PostgreSQL PVC, AutoPilot is ready. Hit `ctrl-c` to exit.
+
+== Run Benchmark and Verify Volume Expansion
+
+In this step, we will run a benchmark that uses more than 20% of our volume and show how AutoPilot dynamically increases the volume size without downtime or user intervention.
+
+Open a shell inside the PostgreSQL container:
+
+[,bash,role="execute"]
+----
+oc exec -it $(oc get pods -l app=postgres --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}') -- bash
+
+----
+
+Launch the `psql` utility and create a database:
+
+[,bash,role="execute"]
+----
+psql
+create database pxdemo;
+\l
+\q
+----
+
+Use `pgbench` to run a baseline transaction benchmark to grow the volume beyond the 20% threshold defined in the AutoPilot Rule:
+
+[,bash,role="execute"]
+----
+pgbench -i -s 50 pxdemo
+----
+
+[NOTE]
+====
+Note that once the test completes, *AutoPilot will ensure the usage remains above 20% for about 30 seconds before triggering the rule.* Type `exit` to exit from the pod shell before proceeding.
+====
+
+== Check if the Rule Was Triggered
+
+We can retrieve events by using the `oc get events` command and filtering for `AutoPilotRule` events. Note that AutoPilot delays the rule from being triggered immediately to ensure the conditions stabilize.
+
+[,bash,role="execute"]
+----
+oc get events --field-selector involvedObject.kind=AutopilotRule,involvedObject.name=auto-volume-resize --all-namespaces -w
+----
+
+When you see `Triggered => ActiveActionsPending`, the action has been activated. When you see `ActiveActionsInProgress => ActiveActionsTake`, this means the resize has taken place and your volume should now be resized by *200%*. Hit `ctrl-c` to clear the screen.
+
+Inspect the volume and verify that it has grown by 200% capacity (3GB).
+
+[,bash,role="execute"]
+----
+oc get pvc px-postgres-pvc
+----
+
+As you can see, the volume is now expanded and our PostgreSQL database didn't require a restart.
+
+[,bash,role="execute"]
+----
+oc get pods
+----
+
+== Manual Resize of PVC
+
+It is also possible to manually resize a PVC. Below we will resize the volume to 4GiB.
+
+Edit the existing PVC and change the size to 4GiB:
+
+[,bash,role="execute"]
+----
+oc edit pvc px-postgres-pvc
+----
+
+Check the utilization of the volume after the resize. It takes approximately 30 seconds to complete resizing.
+
+[,bash,role="execute"]
+----
+oc describe pvc px-postgres-pvc
+----
+
+You can see events that indicate the PVC was successfully resized and that the volume is now 4GiB.
+
+== Summary
+
+In this lab, we successfully configured a dynamic volume resizing solution for PostgreSQL using Portworx and AutoPilot. By creating a PVC that supports expansion and deploying PostgreSQL, we enabled seamless scalability of our storage. The AutoPilot rule we configured ensured that the volume resized automatically as usage increased, which we verified with a benchmark test. We also demonstrated how to manually resize a PVC, showcasing the flexibility of managing storage both automatically and manually. This lab highlights how to maintain efficient, uninterrupted application performance even as storage demands evolve.
