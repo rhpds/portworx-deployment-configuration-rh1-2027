@@ -65,13 +65,13 @@ Intermediate
 
 ## Environment
 
-**Learner view:** Each student receives a dedicated multi-node OpenShift 4.22 cluster. The cluster is provisioned with three control plane nodes and three worker nodes; each worker has two NVMe block devices (one for Portworx data, one for KVDB). OpenShift Virtualization is pre-installed. Portworx Enterprise is NOT pre-installed — students install it during Module 2 as the core lab activity. The OpenShift web console and a Showroom terminal with oc and pxctl access are available from the first module.
+**Learner view:** Each student receives a dedicated multi-node OpenShift 4.22 cluster. The cluster is provisioned with three control plane nodes and three worker nodes; each worker has two NVMe block devices (one for Portworx data, one for KVDB). Neither Portworx Enterprise nor OpenShift Virtualization is pre-installed -- students install both during the lab (Portworx in Module 2, OpenShift Virtualization in Module 4). The OpenShift web console and a Showroom terminal with oc access are available from the first module.
 
 **Automation needed:** Yes
 
 The lab provisioning automation must:
 - Provision a per-student multinode OCP 4.22 cluster (3 control plane, 3 workers) with NVMe block devices attached and formatted for Portworx use
-- Pre-install Red Hat OpenShift Virtualization operator but leave Portworx Enterprise NOT installed (students install it)
+- Leave both Portworx Enterprise and OpenShift Virtualization NOT installed (students install both)
 - Configure an oc login session and terminal with cluster-admin credentials in Showroom
 - Stage sample VM manifests and workload YAMLs in the student's home directory for Modules 4-6
 - Provide Portworx Central credentials or a pre-generated spec token scoped to OCP 4.22 + PXE 3.7 (coordinated with Pure Storage)

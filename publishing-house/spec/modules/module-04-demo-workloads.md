@@ -7,8 +7,9 @@ With storage configured, participants now put Portworx Enterprise to work with r
 ### Audience and Time
 
 - **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; Modules 01-03 completion required
-- **Estimated duration:** 20 minutes
-- **Prerequisites for this module:** Portworx Enterprise online; `portworx-rwx` StorageClass created and verified (Module 03); Red Hat OpenShift Virtualization operator pre-installed in the lab environment
+- **Estimated duration:** 30 minutes (TBD -- pending timing of OCP Virt operator installation in base lab environment)
+- **Prerequisites for this module:** Portworx Enterprise online; `portworx-rwx` StorageClass created and verified (Module 03)
+- **Note:** OpenShift Virtualization is NOT pre-installed -- students install the operator at the start of this module
 
 ### Learning Objectives
 
@@ -20,14 +21,17 @@ With storage configured, participants now put Portworx Enterprise to work with r
 
 | Section | Title | Duration |
 |---------|-------|----------|
-| 1 | Deploy a VM on RWX block storage | 7 min |
-| 2 | Enable the Portworx console plugin | 5 min |
-| 3 | Observe enterprise data services in the OCP console | 4 min |
-| 4 | Review per-VM storage telemetry | 4 min |
+| 1 | Install OpenShift Virtualization operator | ~10 min (TBD in base lab) |
+| 2 | Deploy a VM on RWX block storage | 7 min |
+| 3 | Enable the Portworx console plugin | 5 min |
+| 4 | Observe enterprise data services in the OCP console | 4 min |
+| 5 | Review per-VM storage telemetry | 4 min |
 
 ### Detailed Steps
 
-1. In the OpenShift web console, navigate to Virtualization > VirtualMachines. Confirm that OpenShift Virtualization is installed (the Virtualization menu item is present).
+1. In the OpenShift web console, navigate to OperatorHub and search for "OpenShift Virtualization". Install the OpenShift Virtualization operator into the `openshift-cnv` namespace. Wait for the operator to reach Running state.
+2. Create a HyperConverged custom resource to complete the OpenShift Virtualization deployment. Wait for all components to reach Ready state.
+3. In the OpenShift web console, navigate to Virtualization > VirtualMachines. Confirm that OpenShift Virtualization is installed (the Virtualization menu item is present).
 2. In the Showroom terminal, apply the pre-staged VM manifest: `oc apply -f ~/lab-files/vm-demo.yaml -n demo`. This creates a VirtualMachine object backed by a DataVolume that uses the `portworx-rwx` StorageClass.
 3. Run `oc get vm -n demo` and wait for the VM to reach Running phase.
 4. Run `oc get pvc -n demo` and confirm the DataVolume PVC is Bound and shows the `portworx-rwx` StorageClass.
@@ -48,7 +52,8 @@ With storage configured, participants now put Portworx Enterprise to work with r
 
 ### Infrastructure Notes
 
-- OpenShift Virtualization operator must be pre-installed by lab automation; students should not install it during the lab (it adds 10+ minutes)
+- OpenShift Virtualization operator is NOT pre-installed; students install it at the start of this module (per Chris Crow, Pure Storage -- confirmed 2026-10-02)
+- Actual installation time needs to be measured against the base lab environment before finalizing module duration
 - The Portworx console plugin requires an OCP console restart after enabling; the Showroom tab may need a reload
 - Pre-staged VM manifest (`~/lab-files/vm-demo.yaml`) should use a small Fedora or RHEL CoreOS image to minimize DataVolume import time
 - Telemetry data takes 1-2 minutes to populate after the VM starts running I/O
