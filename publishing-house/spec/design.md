@@ -88,3 +88,7 @@ The lab provisioning automation must:
 - **External services:** docker.io, gcr.io, github.com, central.portworx.com
 - **AAP version:** N/A
 - **Non-GA products:** None (Portworx Enterprise 3.7 confirmed GA)
+
+## Assessment Strategy
+
+Trust-based: this is a classic Showroom lab with no automated solve/validate verification. Success is assessed through facilitator observation and participant completion of each module's verification steps (pxctl status outputs, PVC provisioning confirmation, failover continuity check). No per-module grading scripts are required.
