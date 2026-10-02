@@ -1,89 +1,90 @@
-# [Project Title]
+# Portworx Enterprise Deployment and Configuration on OpenShift
 
-<!-- This file is the design document for your lab or demo. -->
-<!-- Fill in each section below, or run /rhdp-publishing-house to have the intake skill help. -->
-<!-- Sections marked with [brackets] are placeholders — replace with real content. -->
-<!-- The validation gate checks for all required sections before submission. -->
+<!-- Design document for the RH1 2027 lab. Source of truth: RH1 2027 lab description. -->
 
 ## Overview
 
-[2-3 sentences on what this lab or demo is and why it exists. Then a direct description of what participants will do — specific enough that someone reading this section immediately understands the content without interpretation. No flowery language. Example: "Participants will deploy a 3-tier application on OpenShift, configure autoscaling, and troubleshoot a simulated pod failure."]
+This lab teaches Red Hat field engineers how to install and operate Portworx Enterprise on OpenShift as a production replacement for VMware vSAN. The context is the VMware-to-OpenShift migration wave: 86% of organizations are already shrinking their VMware footprint, but only 4% have finished, and these deals stall because no one can answer what replaces vSAN and the datastore.
+
+Participants install Portworx Enterprise from scratch on a dedicated OCP cluster. They generate a storage spec in Portworx Central, deploy the Portworx Operator from the OpenShift Software Catalog, create a StorageCluster custom resource, and verify with pxctl that a distributed storage layer is online across all nodes. They then configure dynamic storage pools, deploy VM workloads on RWX block storage, simulate a node failure and verify workload continuity, and execute a manual pool relocate — completing the full operator-day-1 and day-2 loop in under two hours.
 
 ## Target Audience
 
-- **Role:** [Data scientists, platform engineers, developers, etc.]
-- **Experience level:** [Beginner, intermediate, or advanced]
-- **What they already know:** [Existing skills and knowledge]
-- **What they don't know:** [Skills this lab teaches]
+- **Role:** Red Hat Solutions Engineers, Architects, and Account Executives in field roles
+- **Experience level:** Intermediate
+- **What they already know:** Basic OpenShift navigation (OperatorHub, console, oc CLI); familiarity with persistent storage concepts (PVCs, StorageClasses); awareness of VMware vSAN at a conceptual level
+- **What they don't know:** Portworx Enterprise architecture and installation, Portworx Central spec generation, distributed storage pools, per-VM storage telemetry via pxctl
 
 ## Prerequisites
 
-- [What the learner must know or have completed before starting]
-- [Can the lab validate these automatically? Yes/No — brief explanation]
-
-<!-- If no prerequisites, write "None" -->
+- Familiarity with the OpenShift web console and oc CLI at a basic level
+- Conceptual understanding of Kubernetes PersistentVolumes and StorageClasses
+- No prior Portworx knowledge required; no storage array or advanced CLI expertise required
+- Prerequisites are assumed and cannot be auto-validated by the lab environment
 
 ## Learning Objectives
 
-1. [Action verb] [specific, measurable outcome]
-2. [Action verb] [specific, measurable outcome]
-3. [Action verb] [specific, measurable outcome]
-
-<!-- Scale to duration: up to 3 objectives per 45 min of content. Start with action verbs: Configure, Deploy, Create, Implement, Troubleshoot, Monitor, Scale. Each should be testable. NOT: Understand, Learn, Know. -->
+1. Install Portworx Enterprise on OpenShift by generating a spec in Portworx Central, deploying the Portworx Operator from the OpenShift Software Catalog, and creating a StorageCluster custom resource
+2. Configure dynamic storage pools and OpenShift StorageClasses backed by Portworx distributed volumes, verifying pool health with pxctl
+3. Deploy VM workloads on RWX block storage, enable the Portworx console plugin, and observe enterprise data services as a native tab in the OpenShift console
+4. Execute a storage-level failover, verify workload continuity after a simulated node failure, and analyze per-VM storage telemetry
+5. Perform a manual pool relocate operation and verify data integrity across storage tiers
 
 ## Content Type
 
-[Lab (hands-on) or Demo (presenter-led)]
+Lab (hands-on)
 
 ## Products & Technologies
 
-- [Official Red Hat product name with version if relevant]
-- [Additional products/technologies]
-
-<!-- Use official names: "Red Hat OpenShift", not "OpenShift". List upstream projects separately. -->
+- Red Hat OpenShift Container Platform 4.22
+- Red Hat OpenShift Virtualization (for VM workload modules)
+- Portworx Enterprise 3.7 (Pure Storage partner technology — not a Red Hat product)
+- Portworx Central (spec generation portal — SaaS, partner-managed)
+- pxctl (Portworx CLI, included with Portworx Enterprise)
 
 ## Module Map
 
 | Module | Title | Duration |
 |--------|-------|----------|
-| 1 | [Module title] | [XX min] |
-| 2 | [Module title] | [XX min] |
-| — | **Total hands-on** | **[X hours]** |
-| — | Intro / presentation | [~XX min] |
-| — | **Total lab** | **[~X hours]** |
+| 1 | Overview of Kube Datastore | 15 min |
+| 2 | Installing Portworx Enterprise on OpenShift | 35 min |
+| 3 | Storage and Dynamic Storage Pools | 20 min |
+| 4 | Deploying Demo Workloads | 20 min |
+| 5 | Failover Exercise | 20 min |
+| 6 | Manual Pool Relocate | 15 min |
+| 7 | Discussion: Auto-Rebalancing and Multiple Back-ends | 15 min |
+| — | **Total hands-on (Modules 1-6)** | **2 hours 5 min** |
+| — | Facilitated discussion (Module 7) | 15 min |
+| — | **Total lab** | **~2 hours 20 min** |
 
-<!-- Each module 10-30 min. Total: lab 1-4 hours, demo 15-45 min. Modules should build on each other. -->
+<!-- Module 7 is a facilitated discussion with no hands-on steps. -->
 
 ## Difficulty Level
 
-[Beginner, Intermediate, or Advanced]
+Intermediate
 
 ## Environment
 
-**Learner view:** [What exists when the lab starts — pre-deployed resources, what participants see and interact with. Be specific about cluster details.]
+**Learner view:** Each student receives a dedicated multi-node OpenShift 4.22 cluster. The cluster is provisioned with three control plane nodes and three worker nodes; each worker has two NVMe block devices (one for Portworx data, one for KVDB). OpenShift Virtualization is pre-installed. Portworx Enterprise is NOT pre-installed — students install it during Module 2 as the core lab activity. The OpenShift web console and a Showroom terminal with oc and pxctl access are available from the first module.
 
-**Automation needed:** [Yes/No]
+**Automation needed:** Yes
 
-[If yes, list what automation must provision — operators, per-user resources, sample apps, data sets.]
+The lab provisioning automation must:
+- Provision a per-student multinode OCP 4.22 cluster (3 control plane, 3 workers) with NVMe block devices attached and formatted for Portworx use
+- Pre-install Red Hat OpenShift Virtualization operator but leave Portworx Enterprise NOT installed (students install it)
+- Configure an oc login session and terminal with cluster-admin credentials in Showroom
+- Stage sample VM manifests and workload YAMLs in the student's home directory for Modules 4-6
+- Provide Portworx Central credentials or a pre-generated spec token scoped to OCP 4.22 + PXE 3.7 (coordinated with Pure Storage)
 
 ## Infrastructure Requirements
 
-- **Cloud provider:** [CNV (default), AWS, or Troshka (bare-metal/nested virt)]
-- **Cluster type:** [Multinode or SNO (Single Node OpenShift)]
-- **OCP version:** [e.g. 4.20 — minimum 4.20]
-- **Topology:** [Shared cluster, per-student, or CNV pool]
-- **Sizing:** [Node types and counts with resources — e.g., "3 control plane (16 CPU, 64GB RAM), 6 workers (8 CPU, 32GB RAM, 100GB disk)"]
-- **Automation approach:** [Ansible, GitOps (Helm + ArgoCD), or combo]
-- **AI/MaaS:** [None, MaaS (open-source model), MaaS (frontier model), or dedicated GPU — include justification if not "none"]
-- **External services:** [Named services — e.g., github.com, registry.access.redhat.com — or "None"]
-- **AAP version:** [e.g. 2.5 — only if AAP is in products; omit otherwise]
-- **Non-GA products:** [Product name + version, with access plan — or "None (all products are GA)"]
-
-<!-- Not all fields must be known at intake. "TBD, estimating ~X" is fine. -->
-
-## Assessment Strategy (Optional)
-
-<!-- Optional — skip this section for demos or classic labs without verification. -->
-<!-- Relevant for Zero-Touch labs with solve/validate buttons or labs with automated checks. -->
-
-[If applicable: how will we know the learner successfully completed each module? Per module: verification script, solve/validate button, visible result in the UI, or automated check.]
+- **Cloud provider:** TBD — confirmed in infrastructure phase
+- **Cluster type:** TBD — confirmed in infrastructure phase
+- **OCP version:** TBD — confirmed in infrastructure phase
+- **Topology:** TBD — confirmed in infrastructure phase
+- **Sizing:** TBD — confirmed in infrastructure phase
+- **Automation approach:** TBD — confirmed in infrastructure phase
+- **AI/MaaS:** TBD — confirmed in infrastructure phase
+- **External services:** TBD — confirmed in infrastructure phase
+- **AAP version:** TBD — confirmed in infrastructure phase
+- **Non-GA products:** TBD — confirmed in infrastructure phase

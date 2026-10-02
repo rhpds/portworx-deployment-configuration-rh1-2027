@@ -20,12 +20,45 @@ project:
   workflow_id: "48b2a09d-edb0-4a55-b1d9-2f6a3ef98148"
 
 spec:
-  title: ""
-  learning_objectives: []
-  modules: []              # [{id, title, duration_min}] — written by intake Phase 4; id is stable (e.g. module-01)
+  title: "Portworx Enterprise Deployment and Configuration on OpenShift"
+  learning_objectives:
+    - "Install Portworx Enterprise on OpenShift by generating a spec in Portworx Central, deploying the Portworx Operator from the OpenShift Software Catalog, and creating a StorageCluster custom resource"
+    - "Configure dynamic storage pools and OpenShift StorageClasses backed by Portworx distributed volumes, verifying pool health with pxctl"
+    - "Deploy VM workloads on RWX block storage, enable the Portworx console plugin, and observe enterprise data services as a native tab in the OpenShift console"
+    - "Execute a storage-level failover, verify workload continuity after a simulated node failure, and analyze per-VM storage telemetry"
+    - "Perform a manual pool relocate operation and verify data integrity across storage tiers"
+  modules:
+    - id: module-01
+      title: "Overview of Kube Datastore"
+      duration_min: 15
+      status: not_started
+    - id: module-02
+      title: "Installing Portworx Enterprise on OpenShift"
+      duration_min: 35
+      status: not_started
+    - id: module-03
+      title: "Storage and Dynamic Storage Pools"
+      duration_min: 20
+      status: not_started
+    - id: module-04
+      title: "Deploying Demo Workloads"
+      duration_min: 20
+      status: not_started
+    - id: module-05
+      title: "Failover Exercise"
+      duration_min: 20
+      status: not_started
+    - id: module-06
+      title: "Manual Pool Relocate"
+      duration_min: 15
+      status: not_started
+    - id: module-07
+      title: "Discussion: Auto-Rebalancing and Multiple Back-ends"
+      duration_min: 15
+      status: not_started
   environment:
-    platform: ""               # ocp | rhel-vms — determines which sizing fields apply
-    topology: ""               # shared-cluster | per-student | cnv-pool
+    platform: "ocp"            # ocp | rhel-vms — determines which sizing fields apply
+    topology: "per-student"    # shared-cluster | per-student | cnv-pool
     cloud_provider: cnv        # cnv | aws — cnv is default
     max_concurrent_users: null # required if topology = shared-cluster
 
@@ -55,8 +88,8 @@ spec:
     external_services: []              # named external service dependencies e.g. [github.com]
     gpu_nodes: 0                       # number of GPU nodes (0 = none)
     gpu_type: ""                       # e.g. NVIDIA A100 40GB (required if gpu_nodes > 0)
-  duration_hours: null
-  audience: ""               # beginner | intermediate | advanced
+  duration_hours: 2.5
+  audience: "intermediate"   # beginner | intermediate | advanced
 
 development:
   automation:
@@ -79,7 +112,7 @@ tracking:
 approval_checklist:
 
   content:
-    prerequisites_verifiable: null
+    prerequisites_verifiable: false
     assessment_strategy: ""
     catalog_gap: ""
     design_overview: ""
