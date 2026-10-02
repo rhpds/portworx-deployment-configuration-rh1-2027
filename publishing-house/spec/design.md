@@ -78,13 +78,13 @@ The lab provisioning automation must:
 
 ## Infrastructure Requirements
 
-- **Cloud provider:** TBD — confirmed in infrastructure phase
-- **Cluster type:** TBD — confirmed in infrastructure phase
-- **OCP version:** TBD — confirmed in infrastructure phase
-- **Topology:** TBD — confirmed in infrastructure phase
-- **Sizing:** TBD — confirmed in infrastructure phase
-- **Automation approach:** TBD — confirmed in infrastructure phase
-- **AI/MaaS:** TBD — confirmed in infrastructure phase
-- **External services:** TBD — confirmed in infrastructure phase
-- **AAP version:** TBD — confirmed in infrastructure phase
-- **Non-GA products:** TBD — confirmed in infrastructure phase
+- **Cloud provider:** CNV (RHDP default)
+- **Cluster type:** Multinode
+- **OCP version:** 4.22
+- **Topology:** Per-student
+- **Sizing:** 3 control plane nodes (16 vCPU, 64GB RAM); 3 worker nodes (16 vCPU, 64GB RAM, 200GB disk) plus 2 dedicated block devices per worker (50GB data + 32GB KVDB) for Portworx — infra reviewer to confirm block device provisioning on CNV
+- **Automation approach:** Ansible
+- **AI/MaaS:** None
+- **External services:** docker.io, gcr.io, github.com, central.portworx.com
+- **AAP version:** N/A
+- **Non-GA products:** None (Portworx Enterprise 3.7 confirmed GA)
