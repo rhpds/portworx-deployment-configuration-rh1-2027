@@ -114,7 +114,6 @@ approval_checklist:
   content:
     prerequisites_verifiable: false
     assessment_strategy: ""
-    catalog_gap: ""
     design_overview: "A 2-hour intermediate hands-on lab for Red Hat field engineers (SEs, architects, sellers) that installs and operates Portworx Enterprise on OpenShift as a production vSAN replacement. Participants go from a bare OCP 4.22 cluster to a validated Portworx deployment with dynamic storage pools, VM workloads on RWX block storage, failover verification, and manual pool relocation — closing with a facilitated discussion on auto-rebalancing across heterogeneous storage tiers."
     module_summaries:
       - title: "Overview of Kube Datastore"
@@ -131,8 +130,14 @@ approval_checklist:
         overview: "Executes a pxctl pool relocation to move volume data between storage pools, monitors progress, and verifies data integrity post-relocation — demonstrating the Day-2 explicit data placement operation."
       - title: "Discussion: Auto-Rebalancing and Multiple Back-ends"
         overview: "Facilitated discussion (no hands-on) connecting the lab's operational experience to production patterns: how PX-AutoPilot auto-rebalances across heterogeneous back-ends, best practices for SSD/HDD/NVMe tier mixing, and when to use manual vs. automatic rebalancing."
-    rcars_overlap_pct: null
-    rcars_top_matches: []
+    rcars_overlap_pct: 95
+    rcars_top_matches:
+      - title: "LB1127: Unify VMs and Containers on OpenShift with Portworx"
+        ci_name: "summit-2026.lb1127-portworx-aws.prod"
+        url: "https://catalog.demo.redhat.com/catalog?item=summit-2026.lb1127-portworx-aws.prod"
+        relevance_score: 95
+        why_it_fits: "Covers Portworx Enterprise installation on OpenShift, RWX block storage for VM workloads, and HA/failover scenarios framed around VMware vSAN replacement — but targets platform engineers/storage admins, runs on AWS, and does not cover KDS positioning, manual pool relocation, or auto-rebalancing across heterogeneous backends."
+    catalog_gap: "This lab targets Red Hat field SEs, architects, and sellers rather than platform engineers, and adds three modules not present in LB1127: KDS vs. Portworx Enterprise decision guidance, manual pool relocation, and auto-rebalancing across heterogeneous storage backends. It also runs on OCP 4.22 with PXE 3.7 versus the older versions in LB1127."
     rejections: []
 
   infra:
