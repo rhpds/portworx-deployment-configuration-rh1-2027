@@ -115,8 +115,22 @@ approval_checklist:
     prerequisites_verifiable: false
     assessment_strategy: ""
     catalog_gap: ""
-    design_overview: ""
-    module_summaries: []
+    design_overview: "A 2-hour intermediate hands-on lab for Red Hat field engineers (SEs, architects, sellers) that installs and operates Portworx Enterprise on OpenShift as a production vSAN replacement. Participants go from a bare OCP 4.22 cluster to a validated Portworx deployment with dynamic storage pools, VM workloads on RWX block storage, failover verification, and manual pool relocation — closing with a facilitated discussion on auto-rebalancing across heterogeneous storage tiers."
+    module_summaries:
+      - title: "Overview of Kube Datastore"
+        overview: "Positions Kube Datastore (KDS) relative to Portworx Enterprise using a decision matrix and real market data from the VMware migration wave; orients participants to the lab cluster before installation begins."
+      - title: "Installing Portworx Enterprise on OpenShift"
+        overview: "Core installation module: generate a StorageCluster spec in Portworx Central, deploy the Portworx Operator from the OpenShift Software Catalog, create a StorageCluster CR, and verify distributed storage is online across all nodes with pxctl."
+      - title: "Storage and Dynamic Storage Pools"
+        overview: "Teaches pool inspection with pxctl, StorageClass creation with replication and access-mode parameters, and dynamic PVC provisioning — building the storage foundation required for VM workloads in Module 4."
+      - title: "Deploying Demo Workloads"
+        overview: "Deploys a VM on RWX block storage via OpenShift Virtualization, enables the Portworx console plugin, and surfaces per-VM storage telemetry as a native OpenShift console feature."
+      - title: "Failover Exercise"
+        overview: "Simulates a worker node failure by cordoning and draining, observes Portworx automatic storage-level failover, verifies VM workload continuity, and reviews per-VM telemetry across the failure event."
+      - title: "Manual Pool Relocate"
+        overview: "Executes a pxctl pool relocation to move volume data between storage pools, monitors progress, and verifies data integrity post-relocation — demonstrating the Day-2 explicit data placement operation."
+      - title: "Discussion: Auto-Rebalancing and Multiple Back-ends"
+        overview: "Facilitated discussion (no hands-on) connecting the lab's operational experience to production patterns: how PX-AutoPilot auto-rebalances across heterogeneous back-ends, best practices for SSD/HDD/NVMe tier mixing, and when to use manual vs. automatic rebalancing."
     rcars_overlap_pct: null
     rcars_top_matches: []
     rejections: []
