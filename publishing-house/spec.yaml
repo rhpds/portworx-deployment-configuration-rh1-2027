@@ -16,8 +16,8 @@ project:
   automation_type: "ansible"
   description: " Migration of the existing Portworx Enterprise lab (pxe-rhdp-lab) into the Publishing House workflow for Red Hat One 2027. This lab covers Portworx Enterprise deployment and configuration on   OpenShift as a vSAN/datastore replacement for OCP Virtualization environments. Scope: Kube Datastore overview (KDS vs PXE), installing Portworx Enterprise via the OCP Operator catalog,   managing storage and dynamic storage pools, deploying VM workloads on RWX block storage, simulating node failover and storage recovery, manual pool relocation, and auto-rebalancing across   heterogeneous backends. Target audience: Red Hat field (SEs, architects, sellers). Duration: approximately 2 hours."
   # content_reviewer_email and infra_reviewer_email are assigned by the RHDP team — not set by the author
-  jira_ticket: ""
-  workflow_id: ""
+  jira_ticket: "RHDPCD-2096"
+  workflow_id: "48b2a09d-edb0-4a55-b1d9-2f6a3ef98148"
 
 spec:
   title: ""
