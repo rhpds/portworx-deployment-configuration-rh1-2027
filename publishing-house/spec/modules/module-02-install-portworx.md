@@ -7,7 +7,7 @@ This is the core installation module. Participants go from a bare OCP cluster wi
 ### Audience and Time
 
 - **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; Module 01 completion assumed
-- **Estimated duration:** 35 minutes
+- **Estimated duration:** 15 minutes (raw install is ~6 min of clock time; confirmed by Chris Crow, Pure Storage, 2026-10-12)
 - **Prerequisites for this module:** Cluster-admin access confirmed (Module 01); Portworx Central credentials or pre-generated spec token provided in Showroom
 
 ### Learning Objectives

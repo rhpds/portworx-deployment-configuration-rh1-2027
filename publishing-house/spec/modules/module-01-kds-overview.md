@@ -7,7 +7,7 @@ Kube Datastore (KDS) is Red Hat's lightweight, OCP-native block storage layer bu
 ### Audience and Time
 
 - **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; no prior Portworx knowledge required
-- **Estimated duration:** 15 minutes
+- **Estimated duration:** 10 minutes
 - **Prerequisites for this module:** Access to the Showroom terminal and OpenShift web console; cluster-admin credentials available
 
 ### Learning Objectives

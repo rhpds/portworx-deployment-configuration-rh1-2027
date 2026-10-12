@@ -46,16 +46,18 @@ Lab (hands-on)
 
 | Module | Title | Duration |
 |--------|-------|----------|
-| 1 | Overview of Kube Datastore | 15 min |
-| 2 | Installing Portworx Enterprise on OpenShift | 35 min |
+| 1 | Overview of Kube Datastore | 10 min |
+| 2 | Installing Portworx Enterprise on OpenShift | 15 min |
 | 3 | Storage and Dynamic Storage Pools | 20 min |
-| 4 | Deploying Demo Workloads | 20 min |
+| 4 | Deploying Demo Workloads | 25 min |
 | 5 | Failover Exercise | 20 min |
 | 6 | Manual Pool Relocate | 15 min |
-| 7 | Discussion: Auto-Rebalancing and Multiple Back-ends | 15 min |
-| — | **Total hands-on (Modules 1-6)** | **2 hours 5 min** |
-| — | Facilitated discussion (Module 7) | 15 min |
-| — | **Total lab** | **~2 hours 20 min** |
+| 7 | Discussion: Auto-Rebalancing and Multiple Back-ends | 10 min |
+| — | **Total hands-on (Modules 1-6)** | **1 hour 45 min** |
+| — | Facilitated discussion (Module 7) | 10 min |
+| — | **Total lab** | **~1 hour 55 min** |
+
+<!-- Module 2 timing confirmed by Chris Crow (Pure Storage) 2026-10-12: raw install is ~6 min clock time, ~15 min with student interaction. Module 4 OCP Virt install timing TBD pending base lab environment. -->
 
 <!-- Module 7 is a facilitated discussion with no hands-on steps. -->
 

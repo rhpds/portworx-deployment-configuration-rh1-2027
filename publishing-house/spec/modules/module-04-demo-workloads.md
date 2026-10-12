@@ -7,7 +7,7 @@ With storage configured, participants now put Portworx Enterprise to work with r
 ### Audience and Time
 
 - **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; Modules 01-03 completion required
-- **Estimated duration:** 30 minutes (TBD -- pending timing of OCP Virt operator installation in base lab environment)
+- **Estimated duration:** 25 minutes (TBD -- OCP Virt install timing to be confirmed against base lab)
 - **Prerequisites for this module:** Portworx Enterprise online; `portworx-rwx` StorageClass created and verified (Module 03)
 - **Note:** OpenShift Virtualization is NOT pre-installed -- students install the operator at the start of this module
 

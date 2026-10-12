@@ -10,7 +10,7 @@ This module closes the lab with a facilitated discussion rather than hands-on ex
 ### Audience and Time
 
 - **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; Modules 01-06 completion recommended for maximum context
-- **Estimated duration:** 15 minutes — facilitated group discussion, no hands-on steps
+- **Estimated duration:** 10 minutes — facilitated group discussion, no hands-on steps
 - **Format:** Facilitator-led discussion. No terminal, no OCP console required. Participants may refer back to their running cluster to illustrate points if time allows.
 
 ### Learning Objectives
