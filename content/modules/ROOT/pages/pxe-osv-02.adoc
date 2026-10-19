@@ -1,7 +1,7 @@
 == Scenario - Persistent Storage Volume Provisioning and Availability for Virtual Machines
 
 In this scenario, we will learn about how to provision a virtual machine
-on OpenShift Virtualization with Pure Storage.
+on OpenShift Virtualization with Portworx.
 
 
 ====
@@ -25,14 +25,9 @@ In order to interact with our virtual machine, let's create an SSH keypair.
 ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
 ----
 
-=== Task 2: Create the vmtest namespace
+=== Task 2: Create an OpenShift Secret with our SSH key
 
-[source,sh,role=execute]
-----
-oc create ns vmtest
-----
-
-=== Task 3: Create an OpenShift Secret with our SSH key:
+We will create our virtual machines in the `vmtest` project that we created in the first lab.
 
 [source,sh,role=execute]
 ----
@@ -48,7 +43,7 @@ data:
 EOF
 ----
 
-=== Task 4: Create an OpenShift Virtual Machine
+=== Task 3: Create an OpenShift Virtual Machine
 
 [source,sh,role=execute]
 ----
@@ -63,8 +58,6 @@ spec:
   dataVolumeTemplates:
   - metadata:
       name: centos-stream9-example-ds-centos-stream9
-      annotations:
-        cdi.kubevirt.io/storage.usePopulator: "false"
     spec:
       sourceRef:
         kind: DataSource
@@ -104,6 +97,8 @@ EOF
 
 The above command created a VM called `centos-stream9-example` that we will use for the rest of the labs.
 
+Notice that the `dataVolumeTemplates` section does not specify a StorageClass. The boot disk is cloned from the `centos-stream9` boot image, and it uses `px-rwx-block-kubevirt` because that is the default StorageClass for virtual machines. Because the source boot image is also a Portworx volume, the Containerized Data Importer (CDI) can use a CSI clone instead of copying the image block by block, which is much faster.
+
 We can check the status of the VM running this command.
 
 [source,sh,role=execute]
@@ -116,7 +111,7 @@ Once the VM is running, ctrl-c to exit.  We can then log into this VM using this
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no"
 ----
@@ -127,24 +122,20 @@ Start by logging in to the OpenShift console if you haven't already.
 
 === Task 1: Create a new VM
 
-Navigate to the Virtualzation > Virtual Machines menu
+Navigate to the `Virtualization` > `Catalog` menu
 
-image:create-vm-11.png[Select VMs]
+image:create-vm-11.png[Select Catalog]
 
-Click the `Create` button, and then select `From instanceType` from the menu
-
-image:create-vm-13.png[Click Button]
-
-Select our `vmtest` project in the upper left of the interface
+Select our `vmtest` project in the project drop-down at the top of the interface
 
 image:create-vm-12.png[Select Project]
 
-Select the CentOS Stream image. We can also use the default instance
+On the `InstanceTypes` tab, select the `centos-stream9` bootable volume. We can also use the default instance
 type.
 
 image:create-vm-03-2.png[Select CentOS]
 
-Verify that our StorageClass is set to `px-rwx-block-kubevirt` and click
+Scroll down to the `VirtualMachine details` section. Verify that our StorageClass is set to `px-rwx-block-kubevirt` and click
 `Create VirtualMachine`
 
 image:create-vm-04.png[Select StorageClass]

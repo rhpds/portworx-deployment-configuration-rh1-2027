@@ -2,7 +2,7 @@
 
 == Introduction
 
-In this lab you will learn how to operate OpenShift Virtualization with Portworx to provide high availability (HA), Live Migrations, and Snapshots.
+In this lab you will learn how to operate OpenShift Virtualization 4.22 with Portworx Enterprise 3.7 to provide high availability (HA), Live Migrations, Snapshots, automated capacity management with Autopilot, and Dynamic Application I/O Control.
 
 This lab focuses on hands-on learning.
 

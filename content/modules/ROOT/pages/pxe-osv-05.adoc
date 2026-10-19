@@ -26,7 +26,7 @@ The username is `{openshift_cluster_admin_username}` and the password is `{opens
 === Task 1: Create a new VM for Autopilot
 
 Let's create a new VM to test out Autopilot. This VM will have an additional data disk. We will mount
-this disk and start filling it up with space. We will also use the secret holding the public SSH key that we previously created.
+this disk and start filling it up with data. We will also use the secret holding the public SSH key that we previously created.
 
 [source,sh,role=execute]
 ----
@@ -41,20 +41,16 @@ spec:
   dataVolumeTemplates:
   - metadata:
       name: centos-stream9-autopilot-ds-centos-stream9
-      annotations:
-        cdi.kubevirt.io/storage.usePopulator: "false"
     spec:
       sourceRef:
         kind: DataSource
         name: centos-stream9
         namespace: openshift-virtualization-os-images
       storage:
-        storageClassName: px-csi-vm
+        storageClassName: px-rwx-block-kubevirt
         resources: {}
   - metadata:
       name: centos-stream9-autopilot-data-disk
-      annotations:
-        cdi.kubevirt.io/storage.usePopulator: "false"
     spec:
       preallocation: false
       source:
@@ -63,7 +59,7 @@ spec:
         resources:
           requests:
             storage: 5Gi
-        storageClassName: px-csi-vm
+        storageClassName: px-rwx-block-kubevirt
   instancetype:
     name: u1.medium
   preference:
@@ -99,7 +95,7 @@ EOF
 
 === Task 2: Create the Autopilot Rule
 
-Create the Autopilot rule by running the following
+Create the Autopilot rule by running the following:
 
 [source,sh,role=execute]
 ----
@@ -108,15 +104,19 @@ cat << EOF | oc apply -f -
 apiVersion: autopilot.libopenstorage.org/v1alpha1
 kind: AutopilotRule
 metadata:
- name: volume-resize
+  name: volume-resize
 spec:
   ##### selector filters the objects affected by this rule given labels
   selector:
     matchLabels:
       expand: "true"
+  ##### namespaceSelector filters the namespaces affected by this rule
+  namespaceSelector:
+    matchLabels:
+      expand: "true"
   ##### conditions are the symptoms to evaluate. All conditions are AND'ed
   conditions:
-    # volume usage should be less than 30%
+    # volume usage is greater than 30%
     expressions:
     - key: "100 * (px_volume_usage_bytes / px_volume_capacity_bytes)"
       operator: Gt
@@ -136,15 +136,25 @@ EOF
 
 The rule will:
 
-* *_Line 9:_* Target PVCs with the Kubernetes label `expand: true`
-* *_Lines 14-17:_* Monitor if capacity usage grows to or above 30%
-* *_Line 24:_* Automatically grow the volume and underlying filesystem by 50% of the current volume size if usage above 30% is detected
-* *_Line 26:_* Not grow the volume to more than 20Gi
+* *_selector:_* Target PVCs with the Kubernetes label `expand: true`
+* *_namespaceSelector:_* Only look for those PVCs in namespaces that also have the label `expand: true`
+* *_conditions:_* Monitor whether capacity usage grows above 30%
+* *_actions:_* Automatically grow the volume by 100% of its current size (doubling it) when usage above 30% is detected
+* *_maxsize:_* Never grow the volume to more than 20Gi
 
-=== Task 3: Label our Virtual Machine PVC
+=== Task 3: Label our namespace and Virtual Machine PVC
 
-Autopilot will expand PVCs that have the `expand=true` label applied.
-We will apply that label to our virtual machine's PVC.
+Our Autopilot rule only applies to PVCs that have the `expand=true` label, in namespaces that also have the `expand=true` label.
+In production you would usually include these labels in your namespace and PVC manifests. For this lab, we will apply them to resources that already exist.
+
+Label the `vmtest` namespace:
+
+[source,sh,role=execute]
+----
+oc label namespace vmtest expand=true --overwrite
+----
+
+Then label our virtual machine's data disk PVC:
 
 [source,sh,role=execute]
 ----
@@ -168,39 +178,37 @@ Because this is a new VM, let's format our data disk and mount it to `/data`
 [source,sh,role=execute]
 ----
 # Wait for the VM to boot
-until virtctl ssh cloud-user@vm/centos-stream9-autopilot/vmtest -i ~/.ssh/id_rsa -t "-o StrictHostKeyChecking=no" -c 'lsblk'; do
+until virtctl ssh cloud-user@vm/centos-stream9-autopilot -n vmtest -i ~/.ssh/id_rsa -t "-o StrictHostKeyChecking=no" -c 'lsblk'; do
     echo "waiting for VM to boot"
     sleep 10
 done
 
 # Set up the filesystem and mount the disk as /data
-virtctl ssh cloud-user@vm/centos-stream9-autopilot/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-autopilot -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no" \
   -c '(echo g; echo n; echo 1; echo ; echo ; echo w) | sudo fdisk /dev/vdb && sudo mkfs.ext4 /dev/vdb1 && sudo mkdir /data && sudo mount /dev/vdb1 /data'
 ----
 
-== Task 5: Add some storage space
+== Fill the disk and watch Autopilot respond
 
-We will use the `shred` command to add some storage space to our virtual machine.
+We will use the `shred` command to write data to our virtual machine's data disk.
 
-We could of course log in to our VM though the console, but that would require that we log in to the virtual machine with the supplied password.
+We could of course log in to our VM though the console, but `virtctl` lets us run commands in the VM through the OpenShift control plane without configuring any networking for the VM.
 
-One of the advantages of an extensible framework like OpenShift is that much of the information about our environment is stored as metadata.
-
-=== Task 6: Start filling the disk
+=== Task 5: Start filling the disk
 
 Let's execute a command to write data to the `/data` disk inside of our virtual machine:
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-autopilot/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-autopilot -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no" \
   -c 'sudo touch /data/file; sudo shred -n 1 -s 4G /data/file'
 ----
 
-=== Task 5: Observe the Portworx Autopilot events
+=== Task 6: Observe the Portworx Autopilot events
 
 Run the following command to observe the state changes for Portworx Autopilot:
 
@@ -210,6 +218,11 @@ watch oc get events --field-selector \
   involvedObject.kind=AutopilotRule,involvedObject.name=volume-resize \
   --all-namespaces --sort-by .lastTimestamp -o custom-columns=MESSAGE:.message
 ----
+
+====
+[IMPORTANT]
+It takes some time for Autopilot to detect that the disk has crossed the usage threshold in its rule. You may not see all of the states below right away. Wait until the `ActiveActionsTaken` event is displayed.
+====
 
 You will see Portworx Autopilot move through the following states as it monitors volumes and takes actions defined in Portworx Autopilot rules:
 
@@ -226,7 +239,7 @@ executed yet
 
 Once you see `ActiveActionsTaken` in the event output, press `CTRL+C` to exit the watch command.
 
-=== Task 6: Verify the Volume Expansion
+=== Task 7: Verify the Volume Expansion
 
 Now let's take a look at our PVC - note the automatic expansion of the volume occurred with no human interaction and no application interruption:
 
@@ -237,44 +250,36 @@ oc get pvc -n vmtest
 
 ====
 [IMPORTANT]
-You should now see the data volume size has now increased by 100%.
+You should now see the data disk size has doubled.
 ====
+
+Autopilot expanded our PersistentVolume, just as our rule specified. If this were a container running in a pod, this would be the last step and the process would be fully unattended. However, a virtual machine has its own operating system and its own partition table and filesystem, so we need to grow the partition and filesystem inside the VM to use the new space.
 
 Let's expand the virtual machine's filesystem:
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-autopilot/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-autopilot -n vmtest \
   -i ~/.ssh/id_rsa -t "-o StrictHostKeyChecking=no" \
   -c 'yes Fix | sudo parted --script --fix /dev/vdb print ; yes | sudo parted ---pretend-input-tty /dev/vdb resizepart 1 100% ; sudo resize2fs /dev/vdb1'
 ----
 
-We can now observe the freespace in our virtual machine by running:
+We can now observe the free space in our virtual machine by running:
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-autopilot/vmtest -i ~/.ssh/id_rsa -t "-o StrictHostKeyChecking=no" -c 'df -h'
+virtctl ssh cloud-user@vm/centos-stream9-autopilot -n vmtest -i ~/.ssh/id_rsa -t "-o StrictHostKeyChecking=no" -c 'df -h'
 ----
 
 Notice the size of the data disk mounted at `/data`
 
-You've just configured Portworx Autopilot and observed how it can perform automated capacity management based on rules you configure, and be able to ``right-size'' your underlying persistent storage as it is needed!
+You can also see the expansion in the OpenShift Console. Navigate to `Virtualization` > `VirtualMachines`, click on `centos-stream9-autopilot`, and select the `Portworx` tab to see the VM's volumes, their capacity, and recent events.
 
-== Lab Complete
+====
+[NOTE]
+It can take a few minutes for the new capacity to appear in the console. If you don't see it right away, wait a minute and refresh the page.
+====
 
-Congratulations on completing the Portworx Enterprise with OpenShift Virtualization lab!
+You've just configured Portworx Autopilot and observed how it can perform automated capacity management based on rules you configure, and be able to "right-size" your underlying persistent storage as it is needed!
 
-Throughout this lab you have:
-
-* Installed and configured **Portworx Enterprise** on an OpenShift cluster
-* Provisioned **virtual machines** backed by Portworx persistent storage
-* Performed **live migrations** and validated high availability across node failures
-* Used **Portworx snapshots** to protect and restore a virtual machine
-* Leveraged **Portworx Autopilot** to automatically expand storage capacity in response to real demand — with zero downtime and no manual intervention
-
-Portworx Enterprise provides a powerful, enterprise-grade storage foundation for OpenShift Virtualization workloads, ensuring your virtual machines are resilient, portable, and efficiently managed at scale.
-
-We hope you found this lab valuable. For further reading, visit the https://docs.portworx.com[Portworx documentation^] and the https://docs.openshift.com/container-platform/latest/virt/about_virt/about-virt.html[OpenShift Virtualization documentation^].
-
----
-
+In the next lab, we will see how Autopilot can also adjust a volume's *performance* limits as its size changes.

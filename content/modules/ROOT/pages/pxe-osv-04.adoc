@@ -1,6 +1,6 @@
 == Scenario - Virtual Machine snapshots with Portworx
 
-In this scerario, we will create a virtual machine snapshot.
+In this scenario, we will create a virtual machine snapshot, make a destructive change to our VM, and restore the VM from the snapshot.
 
 
 ====
@@ -15,7 +15,9 @@ The username is `{openshift_cluster_admin_username}` and the password is `{opens
 
 === Task 1: Create a VolumeSnapshotClass
 
-In order to take snapshots, we need to configure a VolumeSnapshotClass.
+In order to take snapshots, we need a VolumeSnapshotClass that tells OpenShift to use the Portworx CSI driver for snapshots. The `csi.openstorage.org/snapshot-type: local` parameter creates the snapshot on the Portworx cluster itself.
+
+OpenShift ships its own CSI snapshot controller, which is why we set `csi.installSnapshotController: false` in our StorageCluster.
 
 Run the following from our terminal tab:
 
@@ -72,7 +74,7 @@ Let's "accidentally" delete an important file:
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no" \
   -c 'sudo rm /etc/fstab'
@@ -83,7 +85,7 @@ We can verify that the file is indeed missing by running:
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no" \
   -c 'cat /etc/fstab'
@@ -116,9 +118,9 @@ image:snapshot-vm-05.png[restore VM]
 
 ====
 [NOTE]
-Restoring a snapshot is a distructive operation as it
+Restoring a snapshot is a destructive operation as it
 discards all changes that were made to a virtual machine since the
-snapshot was taken. To avoid loosing data, it is possible to take a
+snapshot was taken. To avoid losing data, it is possible to take a
 snapshot before restoring our virtual machine.
 ====
 
@@ -139,7 +141,7 @@ our fstab file is back in place:
 
 [source,sh,role=execute]
 ----
-virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no" \
   -c 'cat /etc/fstab'

@@ -1,0 +1,382 @@
+== Scenario - Dynamic Application I/O Control with Autopilot
+
+In this scenario, we will use Portworx Dynamic Application I/O Control to give a volume a performance limit that grows automatically with the size of the volume.
+
+All Portworx volumes in a storage pool share the IOPS and bandwidth of the pool. If one application consumes too much I/O, it becomes a _noisy neighbor_ and slows down every other workload on the cluster. This matters even more with replicated volumes: with a replication factor of 3, every write that an application issues is sent across the storage network to three nodes.
+
+Portworx *Application I/O Control* prevents this by setting a ceiling on the IOPS or bandwidth of a volume. You can set these limits in a StorageClass, so every volume provisioned from that class gets them automatically. This is similar to Storage I/O Control (SIOC) in a vSphere environment.
+
+A fixed limit has a drawback, though: a 10 GiB volume and a 1 TiB volume get the same ceiling. Public clouds solve this by tying performance to capacity (for example, a number of IOPS per GiB). *Dynamic* Application I/O Control brings the same model to Portworx:
+
+* The StorageClass defines a *scale factor* (IOPS per GiB of volume), a *floor* (minimum limit), and a *ceiling* (maximum limit).
+* Autopilot watches the size of each volume and computes its limit as `size in GiB × scale factor`, clamped between the floor and the ceiling.
+* When the volume grows, Autopilot raises the limit automatically. No one has to update the volume by hand.
+
+In this lab we will run a container that continuously measures read IOPS with `fio`, and watch its performance ceiling rise as Autopilot grows its volume.
+
+====
+[TIP]
+
+The {openshift_cluster_console_url}[OpenShift Web Console^] tab will open in a new browser window.
+
+The username is `{openshift_cluster_admin_username}` and the password is `{openshift_cluster_admin_password}`
+====
+
+== Step 1 - Create a StorageClass with dynamic I/O limits
+
+=== Task 1: Create the StorageClass
+
+Run the following command to create a StorageClass named `px-dynamic-io`:
+
+[source,sh,role=execute]
+----
+cat << EOF | oc apply -f -
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: px-dynamic-io
+provisioner: pxd.portworx.com
+parameters:
+  repl: "3"
+  # IOPS limit = volume size in GiB x 50, clamped between 300 and 1500
+  io_throttle_iops_scale_factor: "50"
+  io_throttle_min_iops: "300"
+  io_throttle_rd_iops: "1500"
+  io_throttle_wr_iops: "1500"
+  # Bandwidth limit = volume size in GiB x 0.01 x 1024 MB/s, clamped between 50 and 400 MB/s
+  io_throttle_bw_scale_factor: "0.01"
+  io_throttle_min_bw: "50"
+  io_throttle_rd_bw: "400"
+  io_throttle_wr_bw: "400"
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+EOF
+----
+
+Let's look at the parameters:
+
+* `io_throttle_iops_scale_factor: "50"` - each GiB of volume capacity is entitled to 50 IOPS.
+* `io_throttle_min_iops: "300"` - the floor. No volume gets less than 300 IOPS, even a very small one. (The minimum IOPS limit that Portworx supports is 256.)
+* `io_throttle_rd_iops` and `io_throttle_wr_iops: "1500"` - the ceilings for read and write IOPS. No volume gets more than 1500 IOPS, no matter how large it grows.
+* The `io_throttle_*_bw` parameters work the same way for bandwidth, in MB/s. We have set them high enough that they will not limit the small 4k reads that we use in this lab.
+* `allowVolumeExpansion: true` - required so that Autopilot can grow volumes from this class.
+
+With these settings, we expect the following limits:
+
+[cols="1,1,1",options="header"]
+|===
+|Volume size |Size × 50 |IOPS limit (clamped to 300-1500)
+|5 GiB |250 |300 (floor)
+|10 GiB |500 |500
+|20 GiB |1000 |1000
+|40 GiB |2000 |1500 (ceiling)
+|===
+
+=== Task 2: Create a project for our workload
+
+[source,sh,role=execute]
+----
+oc new-project appio
+----
+
+== Step 2 - Deploy a workload
+
+=== Task 1: Create a PVC and a fio Deployment
+
+We will deploy a 10 GiB PVC from our new StorageClass, and a Deployment that runs the `fio` benchmark tool against it. We are using the container image from https://github.com/kastenhq/kubestr[kubestr^], an open source storage benchmarking tool that includes `fio`.
+
+The container does two things:
+
+. It writes a 6 GiB test file to the volume. This also fills the volume to about 60% of its capacity, which we will use to trigger Autopilot in the next step.
+. It runs a 15-second 4k random read test in a loop, and prints the read IOPS of each test.
+
+[source,sh,role=execute]
+----
+cat << 'EOF' | oc apply -f -
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fio-data
+  namespace: appio
+  labels:
+    app: fio-tenant
+spec:
+  storageClassName: px-dynamic-io
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fio-tenant
+  namespace: appio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: fio-tenant
+  template:
+    metadata:
+      labels:
+        app: fio-tenant
+    spec:
+      containers:
+      - name: fio
+        image: ghcr.io/kastenhq/kubestr:v0.4.36
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          echo "Writing a 6 GiB test file..."
+          fio --name=layout --filename=/data/fio.dat --size=6G --bs=1M --rw=write \
+              --ioengine=libaio --direct=1 --iodepth=8 --minimal > /dev/null
+          echo "Running 4k random read tests (one result every 15 seconds)..."
+          while true; do
+            IOPS=$(fio --name=randread --filename=/data/fio.dat --size=6G --bs=4k --rw=randread \
+                --ioengine=libaio --direct=1 --iodepth=32 --time_based --runtime=15 --minimal \
+                | awk -F';' '{printf "%d", $8}')
+            echo "$(date +%H:%M:%S)  read IOPS: ${IOPS}"
+          done
+        volumeMounts:
+        - name: data
+          mountPath: /data
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: fio-data
+EOF
+----
+
+Wait for the pod to start:
+
+[source,sh,role=execute]
+----
+oc rollout status deployment/fio-tenant -n appio
+----
+
+=== Task 2: Check the volume's I/O limit
+
+The name of the Portworx volume is the same as the name of the PersistentVolume that is bound to our PVC. Let's save it in a variable:
+
+[source,sh,role=execute]
+----
+VOL=$(oc get pvc fio-data -n appio -o jsonpath='{.spec.volumeName}')
+echo "Our Portworx volume is: ${VOL}"
+----
+
+Now use `pxctl` to look at the I/O limits on the volume:
+
+[source,sh,role=execute]
+----
+pxctl volume inspect ${VOL} | grep -iE 'Size|Max[[:space:]]*(Read|Write)[[:space:]]*IOPS'
+----
+
+For a 10 GiB volume, Autopilot computes `10 × 50 = 500`, so you should see `Max Read IOPS` and `Max Write IOPS` of `500`.
+
+====
+[NOTE]
+Autopilot applies the dynamic limit shortly after the volume is created. If you still see `1500` (the ceiling from the StorageClass) or no `Max IOPS` lines at all, wait a minute and run the command again.
+====
+
+=== Task 3: Watch the workload hit its limit
+
+Let's look at the output of our fio container:
+
+[source,sh,role=execute]
+----
+oc logs -f deployment/fio-tenant -n appio
+----
+
+After the test file is written (about a minute), you will see a read IOPS result every 15 seconds. No matter how hard `fio` pushes, the results stay at or just below `500` - the limit for a 10 GiB volume.
+
+Press `ctrl-c` to stop following the logs. The fio container keeps running in the background.
+
+== Step 3 - Let Autopilot grow the volume
+
+Our test file filled the volume to about 60%. Let's create an Autopilot rule that doubles the volume when it is more than 50% full - just like we did for our virtual machine disk in the previous lab. This time, the volume will get more *performance* as well as more capacity.
+
+=== Task 1: Create the Autopilot rule
+
+[source,sh,role=execute]
+----
+cat << EOF | oc apply -f -
+---
+apiVersion: autopilot.libopenstorage.org/v1alpha1
+kind: AutopilotRule
+metadata:
+  name: fio-resize
+spec:
+  selector:
+    matchLabels:
+      app: fio-tenant
+  namespaceSelector:
+    matchLabels:
+      dynamic-io: "true"
+  conditions:
+    # volume usage is greater than 50%
+    expressions:
+    - key: "100 * (px_volume_usage_bytes / px_volume_capacity_bytes)"
+      operator: Gt
+      values:
+        - "50"
+    for: 5
+  actions:
+  - name: openstorage.io.action.volume/resize
+    params:
+      # double the volume, up to 20GiB
+      scalepercentage: "100"
+      maxsize: "20Gi"
+EOF
+----
+
+Our PVC already has the `app: fio-tenant` label. Label the `appio` namespace so that the rule applies to it:
+
+[source,sh,role=execute]
+----
+oc label namespace appio dynamic-io=true --overwrite
+----
+
+=== Task 2: Observe the Autopilot events
+
+[source,sh,role=execute]
+----
+watch oc get events --field-selector \
+  involvedObject.kind=AutopilotRule,involvedObject.name=fio-resize \
+  --all-namespaces --sort-by .lastTimestamp -o custom-columns=MESSAGE:.message
+----
+
+Autopilot moves through the same states that we saw in the previous lab. Once you see `ActiveActionsTaken`, press `ctrl-c` to exit the watch command.
+
+=== Task 3: Verify the new size and the new limit
+
+Check the size of the PVC:
+
+[source,sh,role=execute]
+----
+oc get pvc fio-data -n appio
+----
+
+The PVC has grown to `20Gi`. Unlike the virtual machine in the previous lab, we don't need to do anything else to use the new space. Portworx expands the filesystem on the volume automatically while the container is running.
+
+Now look at the I/O limits again:
+
+[source,sh,role=execute]
+----
+pxctl volume inspect ${VOL} | grep -iE 'Size|Max[[:space:]]*(Read|Write)[[:space:]]*IOPS'
+----
+
+Autopilot detected the new size and recomputed the limit: `20 × 50 = 1000` IOPS. No one updated the volume or the StorageClass.
+
+====
+[NOTE]
+If you still see `500`, give Autopilot a minute to detect the new size and run the command again.
+====
+
+Check the fio results:
+
+[source,sh,role=execute]
+----
+oc logs --tail=8 deployment/fio-tenant -n appio
+----
+
+The most recent results have risen to about `1000` read IOPS. The workload got more performance the moment its volume grew, without restarting the container.
+
+== Step 4 - Grow past the ceiling
+
+Autopilot recomputes the limit whenever the size of the volume changes - not only when an Autopilot rule resizes it. Let's expand the PVC by hand, to 40 GiB:
+
+[source,sh,role=execute]
+----
+oc patch pvc fio-data -n appio \
+  -p '{"spec":{"resources":{"requests":{"storage":"40Gi"}}}}'
+----
+
+After a minute, check the limits again:
+
+[source,sh,role=execute]
+----
+pxctl volume inspect ${VOL} | grep -iE 'Size|Max[[:space:]]*(Read|Write)[[:space:]]*IOPS'
+----
+
+This time Autopilot computes `40 × 50 = 2000`, but that is higher than the ceiling of `1500` that we set in the StorageClass. The limit is clamped to `1500`. The ceiling keeps one large volume from consuming an unfair share of the cluster's I/O, no matter how big it grows.
+
+[source,sh,role=execute]
+----
+oc logs --tail=8 deployment/fio-tenant -n appio
+----
+
+====
+[NOTE]
+If your fio results stay below the new limit, the disks in the lab environment are the bottleneck rather than Portworx. The `pxctl volume inspect` output always shows the limit that Portworx is enforcing.
+====
+
+== Step 5 - Opting out
+
+Sometimes a volume needs a fixed limit, for example during a performance test. To stop Autopilot from updating the limits of one PVC, add the `portworx.io/throttle-auto-update: "false"` annotation to the PVC:
+
+[source,sh,role=execute]
+----
+oc annotate pvc fio-data -n appio portworx.io/throttle-auto-update=false --overwrite
+----
+
+You can add the same annotation to a StorageClass to opt out every PVC that uses that class.
+
+You can still change the limits of any volume by hand with `pxctl`, while the volume is attached. For example, to remove the IOPS limit from our volume entirely:
+
+[source,sh,role=execute]
+----
+pxctl volume update --max_iops off,off ${VOL}
+----
+
+[source,sh,role=execute]
+----
+pxctl volume inspect ${VOL} | grep -iE 'Max[[:space:]]*(Read|Write)[[:space:]]*IOPS' || echo "No IOPS limit on ${VOL}"
+----
+
+Wait 30 seconds, then check the fio results one last time. Without a limit, the workload runs as fast as the underlying disks allow:
+
+[source,sh,role=execute]
+----
+oc logs --tail=4 deployment/fio-tenant -n appio
+----
+
+====
+[NOTE]
+Application I/O Control is supported on Portworx volumes like the ones in this lab. It is not supported on FlashArray Direct Access (FADA), FlashBlade Direct Access (FBDA), or NFS proxy volumes. On hosts that use cgroup v2, which includes OpenShift, I/O limits are not enforced on `sharedv4` (NFS-based RWX filesystem) volumes.
+====
+
+=== Clean up
+
+Delete the workload and its project:
+
+[source,sh,role=execute]
+----
+oc delete project appio
+oc delete autopilotrule fio-resize
+----
+
+You've just used Dynamic Application I/O Control to tie a volume's performance to its capacity. Portworx enforced the limit, and Autopilot kept it correct as the volume grew, so every workload gets a fair share of the cluster's I/O.
+
+== Lab Complete
+
+Congratulations on completing the Portworx Enterprise with OpenShift Virtualization lab!
+
+Throughout this lab you have:
+
+* Installed and configured **Portworx Enterprise 3.7** on an **OpenShift 4.22** cluster
+* Provisioned **virtual machines** backed by Portworx persistent storage
+* Performed **live migrations** and validated high availability across node failures
+* Used **Portworx snapshots** to protect and restore a virtual machine
+* Leveraged **Portworx Autopilot** to automatically expand storage capacity in response to real demand — with zero downtime and no manual intervention
+* Used **Dynamic Application I/O Control** to scale a volume's performance limits with its capacity, and to protect the cluster from noisy neighbors
+
+Portworx Enterprise provides a powerful, enterprise-grade storage foundation for OpenShift Virtualization workloads, ensuring your virtual machines are resilient, portable, and efficiently managed at scale.
+
+We hope you found this lab valuable. For further reading, visit the https://docs.portworx.com[Portworx documentation^] and the https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/virtualization/index[OpenShift Virtualization documentation^].
