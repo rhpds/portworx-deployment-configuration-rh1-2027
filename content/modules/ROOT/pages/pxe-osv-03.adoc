@@ -1,0 +1,167 @@
+== Scenario - Persistent Storage Volume Provisioning and Availability for Virtual Machines
+
+In this scenario, we will learn how to provision a virtual machine
+on OpenShift Virtualization with Portworx.
+
+
+====
+[TIP]
+
+The {openshift_cluster_console_url}[OpenShift Web Console^] tab will open in a new browser window.
+
+The username is `{openshift_cluster_admin_username}` and the password is `{openshift_cluster_admin_password}`
+====
+
+== Step 1 - Modify our VM
+
+Let's modify our VM to help verify that our changes are retained during a live migration and HA event.
+
+Let's write some data to a file:
+
+[source,sh,role=execute]
+----
+virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+  -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" \
+  -c 'echo "Red Hat was here" > ~/text'
+----
+
+We can read our file at any time by running:
+
+[source,sh,role=execute]
+----
+virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+  -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" \
+  -c 'cat ~/text'
+----
+
+== Step 2 - Test Live Migrations
+
+In order for live migrations to be supported, OpenShift Virtual Machines
+must use a PVC with a ReadWriteMany access mode. We can verify this
+by running:
+
+[source,sh,role=execute]
+----
+oc get pvc
+----
+
+=== Task 1: Live Migrate a VM
+
+Back in the OpenShift Console, click on the `Overview` tab and note
+the node where our VM is running.
+
+image:livemigrate-vm-01.png[get ocp node]
+
+We can now migrate the VM to a new node by selecting the `Actions` menu,
+and clicking `Migrate` and leaving `Automatically Select Node`
+
+image:livemigrate-vm-02.png[migrate vm]
+
+After a few moments the interface will update with the new node.
+
+It is important to understand that in OpenShift Virtualization
+VirtualMachines run inside pods. This migration spawns a new pod on the destination node and live migrates the VM to that pod.
+
+We can view the running pods by executing:
+
+[source,sh,role=execute]
+----
+oc get pods -o wide -n vmtest
+----
+
+Notice that one of the pods is in the `Completed` state because the virtual machine process has moved to another pod.
+
+We can view the running VMs by typing:
+
+[source,sh,role=execute]
+----
+oc get vms -n vmtest
+----
+
+Let's check to make sure our data is still there:
+
+[source,sh,role=execute]
+----
+virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+  -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" \
+  -c 'cat ~/text'
+----
+
+== Step 3 - Providing HA
+
+=== Task 1: Proving HA
+
+We will now induce a failure in our OpenShift cluster.
+
+It is important to understand that in OpenShift Virtualization,
+Virtual Machines run inside pods. As we learned above, our virtual
+machine is actually running from inside a pod. Let's find out which node
+our virtual machine is running on:
+
+[source,sh,role=execute]
+----
+NODENAME=$(oc get pods -o wide -n vmtest | grep stream9-example| grep 'Running' | awk '{print $7}' | head -n 1)
+
+echo "Your VM is running on node: ${NODENAME}"
+----
+
+Let's reboot this node. We will now debug the node:
+
+[source,sh,role=execute]
+----
+oc debug node/$NODENAME
+----
+
+====
+[NOTE]
+Running `oc debug node/$NODENAME` can take a few seconds as a pod needs to be attached to the node.
+====
+
+Chroot to the host
+
+[source,sh,role=execute]
+----
+chroot /host
+----
+
+And finally, reboot the OpenShift worker node hosting the running
+MongoDB pod:
+
+[source,sh,role=execute]
+----
+reboot
+----
+
+====
+[WARNING]
+It is possible that the `showroom` lab interface (where you are reading these instructions) is running on the node that you just rebooted. In that case the terminal on the right will disconnect. You will need to refresh your window until OpenShift notices that the node is down and re-schedules the showroom pod to an available node.
+
+To speed up the re-creation of the pod you can also find the showroom pod in the showroom namespace and delete the currently running pod.
+====
+Let's watch our VM and pod status in the vmtest namespace:
+
+[source,sh,role=execute]
+----
+watch oc get pods,vms -o wide -n vmtest
+----
+
+Take note of the NODE column. We will see a new launcher pod start on a
+new node.
+
+We can verify that our virtual machine is again running in the OpenShift
+Console, but because this was an unplanned outage, the VM has rebooted.
+
+Let's check to make sure our data is still there:
+
+[source,sh,role=execute]
+----
+virtctl ssh cloud-user@vm/centos-stream9-example/vmtest \
+  -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no" \
+  -c 'cat ~/text'
+----
+
+You are ready to move to the next lab.
