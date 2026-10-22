@@ -124,21 +124,15 @@ Start by logging in to the OpenShift console if you haven't already.
 
 Navigate to the `Virtualization` > `Catalog` menu
 
-image:create-vm-11.png[Select Catalog]
-
 Select our `vmtest` project in the project drop-down at the top of the interface
-
-image:create-vm-12.png[Select Project]
 
 On the `InstanceTypes` tab, select the `centos-stream9` bootable volume. We can also use the default instance
 type.
 
-image:create-vm-03-2.png[Select CentOS]
-
 Scroll down to the `VirtualMachine details` section. Verify that our StorageClass is set to `px-rwx-block-kubevirt` and click
 `Create VirtualMachine`
 
-image:create-vm-04.png[Select StorageClass]
+image:02-newvm.gif[New VM]
 
 This will automatically start the virtual machine after a short
 provisioning process.

@@ -61,29 +61,23 @@ EOF
 
 === Task: Install the Portworx Operator
 
-Navigate to `Ecosystem` > `Software Catalog` and type `Portworx` in to the filter, as seen in this screenshot:
+Navigate to `Ecosystem` > `Software Catalog` and type `Portworx` in to the filter.
 
-.install-operator
-image:02-pxeinstall-installoperator-01.png[install-operator]
-
-and then click on the `Portworx Enterprise` operator.
+Click on the `Portworx Enterprise` operator.
 
 We will now see the installation screen on the right of our interface.
 The defaults will suffice, and will grab the latest stable version of
 the operator. Click `Install`
-
-.install-operator02
-image:03-pxeinstall-installoperator-02.png[install-operator02]
 
 On the next screen, `enable` the `Console plugin`
 
 Create a new project named `portworx` and install the Portworx
 operator in to the new `portworx` project.
 
-.install-operator03
-image:04-pxeinstall-installoperator-03.png[install-operator03]
-
 and click the `Install` button.
+
+.install-operator
+image:01-installoperator.gif[install-operator]
 
 The installation will prompt you to create a `StorageCluster` object,
 instead, click `View installed Operators in Namespace portworx`. We will create the StorageCluster from the CLI in the next step.
@@ -91,6 +85,14 @@ instead, click `View installed Operators in Namespace portworx`. We will create 
 === Task: Install Portworx StorageCluster
 
 For this step, we need to switch back to our `Terminal`.
+
+Autopilot needs to read Portworx metrics from the OpenShift monitoring stack. It queries them through *Thanos Querier*, which is part of OpenShift monitoring. Let's look up the Thanos Querier route so that we can include it in our specification:
+
+[source,sh,role=execute]
+----
+THANOS_HOST=$(oc get route thanos-querier -n openshift-monitoring -o jsonpath='{.spec.host}')
+echo "Thanos Querier: ${THANOS_HOST}"
+----
 
 In most environments you would use Portworx Central to generate a StorageCluster specification for your cluster. For this lab, we have prepared the specification for you. Run the following command to write it to a file:
 
@@ -100,19 +102,23 @@ cat << EOF > $HOME/px-spec.yaml
 kind: StorageCluster
 apiVersion: core.libopenstorage.org/v1
 metadata:
-  name: px-cluster
+  name: px-cluster-f7df49ec-fce1-43d9-aaa2-e10bf3d5fa63
   namespace: portworx
   annotations:
     portworx.io/is-openshift: "true"
+    portworx.io/is-eks: "true"
+    portworx.io/misc-args: "-rt_opts small_conf=1 -T px-storev2 "
+    portworx.io/preflight-check: "true"
 spec:
-  image: portworx/oci-monitor:3.7.0
+  image: docker.io/portworx/oci-monitor:3.7.1
   imagePullPolicy: Always
   kvdb:
     internal: true
+    enableTLS: true
   cloudStorage:
     deviceSpecs:
-    - type=gp3,size=50
-    maxStorageNodesPerZone: 3
+    - type=gp3,size=150
+    systemMetadataDeviceSpec: type=gp3,size=64
   secretsProvider: k8s
   startPort: 17001
   stork:
@@ -121,16 +127,23 @@ spec:
       webhook-controller: "true"
   autopilot:
     enabled: true
+    providers:
+    - name: default
+      type: prometheus
+      params:
+        url: https://${THANOS_HOST}
   runtimeOptions:
     default-io-profile: "6"
   csi:
     enabled: true
-    installSnapshotController: false
   monitoring:
     telemetry:
       enabled: false
     prometheus:
       exportMetrics: true
+  certManager:
+    enabled: true
+  env:
 EOF
 ----
 

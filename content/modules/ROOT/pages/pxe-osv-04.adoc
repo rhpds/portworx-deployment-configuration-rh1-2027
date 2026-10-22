@@ -47,11 +47,9 @@ We can then find the virtual machine we will be using for this snapshot.
 
 Click on the VM labeled `centos-stream9-example`.
 
-image:snapshot-vm-01.png[Select VM]
-
 Navigate to the `Snapshots` tab and select `Take Snapshot`
 
-image:snapshot-vm-02.png[Take Snapshot]
+image:04-vmsnap.gif[Take Snapshot]
 
 We can accept the default and select `Save`
 

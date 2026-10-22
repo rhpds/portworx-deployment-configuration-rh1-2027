@@ -24,7 +24,7 @@ Let's write some data to a file:
 virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
   -i ~/.ssh/id_rsa \
   -t "-o StrictHostKeyChecking=no" \
-  -c 'echo "Red Hat was here" > ~/text'
+  -c 'echo "Hello from Red Hat and Portworx" > ~/text'
 ----
 
 We can read our file at any time by running:
@@ -56,9 +56,9 @@ the node where our VM is running.
 image:livemigrate-vm-01.png[get ocp node]
 
 We can now migrate the VM to a new node by selecting the `Actions` menu,
-clicking `Migration` > `Compute`, leaving `Automatically select a Node` selected, and clicking `Migrate VirtualMachine`
+clicking `Migration` > `Compute`, and clicking `Migrate VirtualMachine`
 
-image:livemigrate-vm-02.png[migrate vm]
+image:03-migratevm.gif[migrate vm]
 
 After a few moments the interface will update with the new node.
 
