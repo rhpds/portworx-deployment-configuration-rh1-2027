@@ -112,9 +112,11 @@ metadata:
 spec:
   image: docker.io/portworx/oci-monitor:3.7.1
   imagePullPolicy: Always
+  certManager:
+    enabled: false
   kvdb:
     internal: true
-    enableTLS: true
+    enableTLS: false
   cloudStorage:
     deviceSpecs:
     - type=gp3,size=150
@@ -136,13 +138,12 @@ spec:
     default-io-profile: "6"
   csi:
     enabled: true
+    installSnapshotController: false
   monitoring:
     telemetry:
       enabled: false
     prometheus:
       exportMetrics: true
-  certManager:
-    enabled: true
   env:
 EOF
 ----
@@ -157,11 +158,13 @@ cat -n $HOME/px-spec.yaml
 The StorageCluster CR controls the configuration of the Portworx cluster. Some of the important settings are:
 
 * `portworx.io/is-openshift: "true"` tells Portworx that we are installing on an OpenShift cluster.
-* `image` is the Portworx Enterprise version we are installing: `3.7.0`. Upgrading Portworx is as easy as changing this line.
-* `cloudStorage.deviceSpecs` is our disk configuration. Portworx uses a feature called *Cloud Drives* to create a 50 GB gp3 disk for each storage node and attach it automatically as part of the installation.
+* `image` is the Portworx Enterprise version we are installing: `3.7.1`. Upgrading Portworx is as easy as changing this line.
+* `cloudStorage.deviceSpecs` is our disk configuration. Portworx uses a feature called *Cloud Drives* to create a 150 GB gp3 disk for each storage node and attach it automatically as part of the installation.
 * `stork` enables STORK (Storage Orchestrator Runtime for Kubernetes), which makes the OpenShift scheduler storage aware. We will see this in action during the high availability exercise.
 * `autopilot.enabled` turns on Portworx Autopilot, which we will use for automated capacity management and dynamic I/O control at the end of this lab.
-* `csi.installSnapshotController: false` tells Portworx to use the CSI snapshot controller that OpenShift already ships. If both controllers run, each one adds a finalizer to every `VolumeSnapshot`, and snapshot deletion hangs.
+* `csi.installSnapshotController: false` tells Portworx to use the CSI snapshot controller that OpenShift already ships, instead of deploying a second one.
+* `certManager.enabled: false` stops the Portworx operator from installing its own cert-manager. OpenShift already runs the Red Hat cert-manager Operator, and the Portworx operator will not overwrite CRDs it does not own.
+* `kvdb.enableTLS: false` disables TLS for the internal KVDB, because that TLS depends on the operator-managed cert-manager.
 * `monitoring.prometheus.exportMetrics` sends Portworx metrics to the OpenShift monitoring stack that we enabled above.
 
 Additional documentation can be found

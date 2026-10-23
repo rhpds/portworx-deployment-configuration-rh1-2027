@@ -13,32 +13,7 @@ The username is `{openshift_cluster_admin_username}` and the password is `{opens
 
 == Virtual Machine Snapshots
 
-=== Task 1: Create a VolumeSnapshotClass
-
-In order to take snapshots, we need a VolumeSnapshotClass that tells OpenShift to use the Portworx CSI driver for snapshots. The `csi.openstorage.org/snapshot-type: local` parameter creates the snapshot on the Portworx cluster itself.
-
-OpenShift ships its own CSI snapshot controller, which is why we set `csi.installSnapshotController: false` in our StorageCluster.
-
-Run the following from our terminal tab:
-
-[source,sh,role=execute]
-----
-cat << EOF | oc apply -f -
----
-apiVersion: snapshot.storage.k8s.io/v1
-kind: VolumeSnapshotClass
-metadata:
-  name: px-csi-snapclass
-  annotations:
-    snapshot.storage.kubernetes.io/is-default-class: "true"
-driver: pxd.portworx.com
-deletionPolicy: Delete
-parameters:
-  csi.openstorage.org/snapshot-type: local
-EOF
-----
-
-=== Task 2: Take a snapshot of our new VM
+=== Task 1: Take a snapshot of our new VM
 
 Log in to the OpenShift Console.
 
@@ -61,9 +36,7 @@ our virtual machine and provide customizations. We can safely ignore
 this warning.
 ====
 
-image:snapshot-vm-03.png[Save Snapshot]
-
-=== Task 3: Make a change to our VM
+=== Task 2: Make a change to our VM
 
 Let's switch back to the command line. To make a change, we are simply
 going to make a change to our running virtual machine.
@@ -91,7 +64,7 @@ virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
 
 Let's fix our VM.
 
-=== Task 4: Restore our snapshot
+=== Task 3: Restore our snapshot
 
 Let's log back in to the OpenShift Console.
 
@@ -100,11 +73,7 @@ We can then find the virtual machine we will be using for this snapshot.
 
 Click on the VM labeled `centos-stream9-example`.
 
-image:snapshot-vm-01.png[Select VM]
-
 Click on the `Actions` menu, and select `Stop`
-
-image:snapshot-vm-04.png[Stop VM]
 
 This will stop our running VM so that we can restore our snapshot.
 
@@ -112,7 +81,7 @@ Click on the `Snapshots` tab. Then click on the kebab menu by the
 snapshot we created earlier and click
 `Restore VirtualMachine from snapshot`
 
-image:snapshot-vm-05.png[restore VM]
+image:06-vmsnaprestore.gif[restore VM]
 
 ====
 [NOTE]
@@ -127,12 +96,12 @@ Confirm the restore by clicking the `Restore` button.
 We can now start our virtual machine by clicking on the `Action` menu
 and clicking `Start`
 
-image:snapshot-vm-06.png[start VM]
+image:07-vmstart.gif[start VM]
 
 We can check on the progress of our virtual machine’s boot by clicking
 on the `Console` or `Overview` tab.
 
-=== Task 5: Verify our restore
+=== Task 4: Verify our restore
 
 After a couple of minutes, our VM should be running. Let’s verify that
 our fstab file is back in place:

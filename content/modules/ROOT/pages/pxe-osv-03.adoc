@@ -53,8 +53,6 @@ oc get pvc -n vmtest
 In the OpenShift Console, navigate to `Virtualization` > `VirtualMachines`, select the `vmtest` project, and click on `centos-stream9-example`. On the `Overview` tab, note
 the node where our VM is running.
 
-image:livemigrate-vm-01.png[get ocp node]
-
 We can now migrate the VM to a new node by selecting the `Actions` menu,
 clicking `Migration` > `Compute`, and clicking `Migrate VirtualMachine`
 

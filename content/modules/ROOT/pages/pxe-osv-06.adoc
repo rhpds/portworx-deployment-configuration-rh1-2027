@@ -12,7 +12,7 @@ A fixed limit has a drawback, though: a 10 GiB volume and a 1 TiB volume get the
 * Autopilot watches the size of each volume and computes its limit as `size in GiB × scale factor`, clamped between the floor and the ceiling.
 * When the volume grows, Autopilot raises the limit automatically. No one has to update the volume by hand.
 
-In this lab we will run a container that continuously measures read IOPS with `fio`, and watch its performance ceiling rise as Autopilot grows its volume.
+In this lab we will run a container that continuously measures read IOPS with `fio`, and watch its performance ceiling rise as we grow its volume.
 
 ====
 [TIP]
@@ -89,7 +89,7 @@ We will deploy a 10 GiB PVC from our new StorageClass, and a Deployment that run
 
 The container does two things:
 
-. It writes a 6 GiB test file to the volume. This also fills the volume to about 60% of its capacity, which we will use to trigger Autopilot in the next step.
+. It writes a 6 GiB test file to the volume.
 . It runs a 15-second 4k random read test in a loop, and prints the read IOPS of each test.
 
 [source,sh,role=execute]
@@ -198,63 +198,19 @@ After the test file is written (about a minute), you will see a read IOPS result
 
 Press `ctrl-c` to stop following the logs. The fio container keeps running in the background.
 
-== Step 3 - Let Autopilot grow the volume
+== Step 3 - Grow the volume
 
-Our test file filled the volume to about 60%. Let's create an Autopilot rule that doubles the volume when it is more than 50% full - just like we did for our virtual machine disk in the previous lab. This time, the volume will get more *performance* as well as more capacity.
+Our volume is 10 GiB, and Autopilot has set its limit to 500 IOPS. Now let's give the workload more capacity and see what happens to its performance.
 
-=== Task 1: Create the Autopilot rule
+=== Task 1: Expand the PVC
 
-[source,sh,role=execute]
-----
-cat << EOF | oc apply -f -
----
-apiVersion: autopilot.libopenstorage.org/v1alpha1
-kind: AutopilotRule
-metadata:
-  name: fio-resize
-spec:
-  selector:
-    matchLabels:
-      app: fio-tenant
-  namespaceSelector:
-    matchLabels:
-      dynamic-io: "true"
-  conditions:
-    # volume usage is greater than 50%
-    expressions:
-    - key: "100 * (px_volume_usage_bytes / px_volume_capacity_bytes)"
-      operator: Gt
-      values:
-        - "50"
-    for: 5
-  actions:
-  - name: openstorage.io.action.volume/resize
-    params:
-      # double the volume, up to 20GiB
-      scalepercentage: "100"
-      maxsize: "20Gi"
-EOF
-----
-
-Our PVC already has the `app: fio-tenant` label. Label the `appio` namespace so that the rule applies to it:
+Expand the PVC to 20 GiB:
 
 [source,sh,role=execute]
 ----
-oc label namespace appio dynamic-io=true --overwrite
+oc patch pvc fio-data -n appio \
+  -p '{"spec":{"resources":{"requests":{"storage":"20Gi"}}}}'
 ----
-
-=== Task 2: Observe the Autopilot events
-
-[source,sh,role=execute]
-----
-watch oc get events --field-selector \
-  involvedObject.kind=AutopilotRule,involvedObject.name=fio-resize \
-  --all-namespaces --sort-by .lastTimestamp -o custom-columns=MESSAGE:.message
-----
-
-Autopilot moves through the same states that we saw in the previous lab. Once you see `ActiveActionsTaken`, press `ctrl-c` to exit the watch command.
-
-=== Task 3: Verify the new size and the new limit
 
 Check the size of the PVC:
 
@@ -263,7 +219,9 @@ Check the size of the PVC:
 oc get pvc fio-data -n appio
 ----
 
-The PVC has grown to `20Gi`. Unlike the virtual machine in the previous lab, we don't need to do anything else to use the new space. Portworx expands the filesystem on the volume automatically while the container is running.
+The expansion takes a few seconds. If `CAPACITY` still shows `10Gi`, run the command again. Once the PVC has grown to `20Gi`, there is nothing else to do. Unlike the virtual machine in the previous lab, we don't need to do anything else to use the new space. Portworx expands the filesystem on the volume automatically while the container is running.
+
+=== Task 2: Verify the new limit
 
 Now look at the I/O limits again:
 
@@ -290,7 +248,7 @@ The most recent results have risen to about `1000` read IOPS. The workload got m
 
 == Step 4 - Grow past the ceiling
 
-Autopilot recomputes the limit whenever the size of the volume changes - not only when an Autopilot rule resizes it. Let's expand the PVC by hand, to 40 GiB:
+Autopilot recomputes the limit whenever the size of the volume changes, no matter who changes it. Let's expand the PVC again, to 40 GiB:
 
 [source,sh,role=execute]
 ----
@@ -359,7 +317,7 @@ Delete the workload and its project:
 [source,sh,role=execute]
 ----
 oc delete project appio
-oc delete autopilotrule fio-resize
+oc delete storageclass px-dynamic-io
 ----
 
 You've just used Dynamic Application I/O Control to tie a volume's performance to its capacity. Portworx enforced the limit, and Autopilot kept it correct as the volume grew, so every workload gets a fair share of the cluster's I/O.
