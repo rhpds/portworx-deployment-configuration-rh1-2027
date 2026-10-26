@@ -1,0 +1,155 @@
+== Scenario - Persistent Storage Volume Provisioning and Availability for Virtual Machines
+
+In this scenario, we will learn about how to provision a virtual machine
+on OpenShift Virtualization with Portworx.
+
+
+====
+[TIP]
+
+The {openshift_cluster_console_url}[OpenShift Web Console^] tab will open in a new browser window.
+
+The username is `{openshift_cluster_admin_username}` and the password is `{openshift_cluster_admin_password}`
+====
+
+== Step 1 - Deploy a virtual machine using the OpenShift command line tool
+
+Let's start by building a VM using the `oc` command line tool.
+
+=== Task 1: Generate an SSH keypair
+
+In order to interact with our virtual machine, let's create an SSH keypair.
+
+[source,sh,role=execute]
+----
+ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa -N ""
+----
+
+=== Task 2: Create an OpenShift Secret with our SSH key
+
+We will create our virtual machines in the `vmtest` project that we created in the first lab.
+
+[source,sh,role=execute]
+----
+cat << EOF | oc apply -f -
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: authorized-keys
+  namespace: vmtest
+data:
+  key: $(cat ~/.ssh/id_rsa.pub | base64 -w0)
+EOF
+----
+
+=== Task 3: Create an OpenShift Virtual Machine
+
+[source,sh,role=execute]
+----
+cat << EOF | oc apply -f -
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: centos-stream9-example
+  namespace: vmtest
+spec:
+  dataVolumeTemplates:
+  - metadata:
+      name: centos-stream9-example-ds-centos-stream9
+    spec:
+      sourceRef:
+        kind: DataSource
+        name: centos-stream9
+        namespace: openshift-virtualization-os-images
+      storage:
+        resources: {}
+  instancetype:
+    name: u1.medium
+  preference:
+    name: centos.stream9
+  runStrategy: Always
+  template:
+    spec:
+      domain:
+        devices: {}
+        resources: {}
+      terminationGracePeriodSeconds: 180
+      volumes:
+      - name: centos-stream9-example-ds-centos-stream9
+        dataVolume:
+          name: centos-stream9-example-ds-centos-stream9
+      - name: cloudinitdisk
+        cloudInitNoCloud:
+          userData: |-
+            #cloud-config
+            user: cloud-user
+      accessCredentials:
+      - sshPublicKey:
+          propagationMethod:
+            noCloud: {}
+          source:
+            secret:
+              secretName: authorized-keys
+EOF
+----
+
+The above command created a VM called `centos-stream9-example` that we will use for the rest of the labs.
+
+Notice that the `dataVolumeTemplates` section does not specify a StorageClass. The boot disk is cloned from the `centos-stream9` boot image, and it uses `px-rwx-block-kubevirt` because that is the default StorageClass for virtual machines. Because the source boot image is also a Portworx volume, the Containerized Data Importer (CDI) can use a CSI clone instead of copying the image block by block, which is much faster.
+
+We can check the status of the VM running this command.
+
+[source,sh,role=execute]
+----
+watch oc get vms,dv -n vmtest
+----
+Provision will take a couple of minutes.
+
+Once the VM is running, ctrl-c to exit.  We can then log into this VM using this command (if you do so make sure to exit again by pressing `Ctrl-D` or typing `exit` and pressing `Enter`):
+
+[source,sh,role=execute]
+----
+virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest \
+  -i ~/.ssh/id_rsa \
+  -t "-o StrictHostKeyChecking=no"
+----
+
+== Step 2 - Deploy a Virtual Machine using the OpenShift Console
+
+Start by logging in to the OpenShift console if you haven't already.
+
+=== Task 1: Create a new VM
+
+Navigate to the `Virtualization` > `Catalog` menu
+
+Select our `vmtest` project in the project drop-down at the top of the interface
+
+On the `InstanceTypes` tab, select the `centos-stream9` bootable volume. We can also use the default instance
+type.
+
+Scroll down to the `VirtualMachine details` section. Verify that our StorageClass is set to `px-rwx-block-kubevirt` and click
+`Create VirtualMachine`
+
+image:02-newvm.gif[New VM]
+
+This will automatically start the virtual machine after a short
+provisioning process.
+
+====
+[NOTE]
+It can take a few minutes for the VM to boot for the first time
+====
+
+Explore the tabs for this virtual machine. We can view metrics,
+configure snapshots, and view the YAML configuration.
+
+image:create-vm-06.png[Interact with VM]
+
+====
+[NOTE]
+The Virtual Machine name will be different in your environment
+====
+
+Click `Next` to move on to the next lab.

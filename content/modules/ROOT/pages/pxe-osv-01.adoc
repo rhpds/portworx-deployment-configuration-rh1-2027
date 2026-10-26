@@ -1,0 +1,421 @@
+== Scenario - Storage Classes and Storage Profiles
+
+In this scenario, we will install Portworx Enterprise 3.7 on an existing OpenShift 4.22 cluster, deploy OpenShift Virtualization, and review the StorageClasses that Portworx provides for virtual machines.
+
+=== Creating our project
+
+For this lab, we will be using a new project. In the terminal window execute the following command to create a new project.
+
+[source,sh,role=execute]
+----
+oc new-project vmtest
+----
+
+=== Reminder: Accessing the OpenShift Console
+
+You can connect to the terminal in the windows to the right.
+
+====
+[TIP]
+
+The {openshift_cluster_console_url}[OpenShift Web Console^] tab will open in a new browser window.
+
+The username is `{openshift_cluster_admin_username}` and the password is `{openshift_cluster_admin_password}`
+====
+
+=== Task: Exploring the CLI
+
+Red Hat OpenShift uses the `oc` cli utility. This utility has a similar
+syntax to kubectl, but with some OpenShift specific extensions.
+
+Let's look at the nodes that make up our cluster:
+
+[source,sh,role=execute]
+----
+oc get nodes
+----
+
+== Install Portworx
+
+To install Portworx, we first need to install the Portworx Operator.
+
+=== Task: Enable User Workload Monitoring
+
+OpenShift 4.12 and later do not support the Portworx-managed Prometheus deployment. Instead, Portworx exports its metrics to the OpenShift monitoring stack, so you must enable monitoring for user-defined projects before installing the Portworx Operator. Portworx Autopilot, which we use later in this lab, reads its metrics from this same monitoring stack.
+
+To integrate OpenShift’s monitoring and alerting system with Portworx, create a `cluster-monitoring-config` ConfigMap in the `openshift-monitoring` namespace:
+
+[source,sh,role=execute]
+----
+cat << EOF | oc apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+data:
+  config.yaml: |
+    enableUserWorkload: true
+EOF
+----
+
+=== Task: Install the Portworx Operator
+
+Navigate to `Ecosystem` > `Software Catalog` and type `Portworx` in to the filter.
+
+Click on the `Portworx Enterprise` operator.
+
+We will now see the installation screen on the right of our interface.
+The defaults will suffice, and will grab the latest stable version of
+the operator. Click `Install`
+
+On the next screen, `enable` the `Console plugin`
+
+Create a new project named `portworx` and install the Portworx
+operator in to the new `portworx` project.
+
+and click the `Install` button.
+
+.install-operator
+image:01-installoperator.gif[install-operator]
+
+The installation will prompt you to create a `StorageCluster` object,
+instead, click `View installed Operators in Namespace portworx`. We will create the StorageCluster from the CLI in the next step.
+
+=== Task: Install Portworx StorageCluster
+
+For this step, we need to switch back to our `Terminal`.
+
+Autopilot needs to read Portworx metrics from the OpenShift monitoring stack. It queries them through *Thanos Querier*, which is part of OpenShift monitoring. Let's look up the Thanos Querier route so that we can include it in our specification:
+
+[source,sh,role=execute]
+----
+THANOS_HOST=$(oc get route thanos-querier -n openshift-monitoring -o jsonpath='{.spec.host}')
+echo "Thanos Querier: ${THANOS_HOST}"
+----
+
+In most environments you would use Portworx Central to generate a StorageCluster specification for your cluster. For this lab, we have prepared the specification for you. Run the following command to write it to a file:
+
+[source,sh,role=execute]
+----
+cat << EOF > $HOME/px-spec.yaml
+kind: StorageCluster
+apiVersion: core.libopenstorage.org/v1
+metadata:
+  name: px-cluster-f7df49ec-fce1-43d9-aaa2-e10bf3d5fa63
+  namespace: portworx
+  annotations:
+    portworx.io/is-openshift: "true"
+    portworx.io/is-eks: "true"
+    portworx.io/misc-args: "-rt_opts small_conf=1 -T px-storev2 "
+    portworx.io/preflight-check: "true"
+spec:
+  image: docker.io/portworx/oci-monitor:3.7.1
+  imagePullPolicy: Always
+  certManager:
+    enabled: false
+  kvdb:
+    internal: true
+    enableTLS: false
+  cloudStorage:
+    deviceSpecs:
+    - type=gp3,size=150
+    systemMetadataDeviceSpec: type=gp3,size=64
+  secretsProvider: k8s
+  startPort: 17001
+  stork:
+    enabled: true
+    args:
+      webhook-controller: "true"
+  autopilot:
+    enabled: true
+    providers:
+    - name: default
+      type: prometheus
+      params:
+        url: https://${THANOS_HOST}
+  runtimeOptions:
+    default-io-profile: "6"
+  csi:
+    enabled: true
+    installSnapshotController: false
+  monitoring:
+    telemetry:
+      enabled: false
+    prometheus:
+      exportMetrics: true
+  env:
+EOF
+----
+
+Take a look at our manifest by using the cat utility:
+
+[source,sh,role=execute]
+----
+cat -n $HOME/px-spec.yaml
+----
+
+The StorageCluster CR controls the configuration of the Portworx cluster. Some of the important settings are:
+
+* `portworx.io/is-openshift: "true"` tells Portworx that we are installing on an OpenShift cluster.
+* `image` is the Portworx Enterprise version we are installing: `3.7.1`. Upgrading Portworx is as easy as changing this line.
+* `cloudStorage.deviceSpecs` is our disk configuration. Portworx uses a feature called *Cloud Drives* to create a 150 GB gp3 disk for each storage node and attach it automatically as part of the installation.
+* `stork` enables STORK (Storage Orchestrator Runtime for Kubernetes), which makes the OpenShift scheduler storage aware. We will see this in action during the high availability exercise.
+* `autopilot.enabled` turns on Portworx Autopilot, which we will use for automated capacity management and dynamic I/O control at the end of this lab.
+* `csi.installSnapshotController: false` tells Portworx to use the CSI snapshot controller that OpenShift already ships, instead of deploying a second one.
+* `certManager.enabled: false` stops the Portworx operator from installing its own cert-manager. OpenShift already runs the Red Hat cert-manager Operator, and the Portworx operator will not overwrite CRDs it does not own.
+* `kvdb.enableTLS: false` disables TLS for the internal KVDB, because that TLS depends on the operator-managed cert-manager.
+* `monitoring.prometheus.exportMetrics` sends Portworx metrics to the OpenShift monitoring stack that we enabled above.
+
+Additional documentation can be found
+https://docs.portworx.com/portworx-enterprise/platform/install/aws/aws-redhat-openshift-with-console-plugin[here^].
+
+We can now apply the specification:
+
+[source,sh,role=execute]
+----
+oc apply -f $HOME/px-spec.yaml
+----
+
+====
+[NOTE]
+
+The Portworx cluster pods can take up to 10 minutes to start. During this time, you will see pods restart.
+This is expected behavior.
+====
+
+We can watch the containers come up by running:
+
+[source,sh,role=execute]
+----
+watch oc -n portworx get pods -l name=portworx
+----
+
+When all three of the `px-cluster` pods have a Ready status of `1/1` we
+can press `ctrl-c` to exit out of our watch command.
+
+=== Task: Check the Portworx cluster status
+
+Portworx ships with a `pxctl` CLI utility that you can use for managing
+Portworx. We'll cover this utility more in the labs here in a little
+bit!
+
+For now, we'll run `pxctl status` via `oc` in one of the Portworx
+pods to check the StorageCluster status.
+
+First, setup the `PX_POD` environment variable:
+
+[source,sh,role=execute]
+----
+PX_POD=$(oc get pods -l name=portworx -n portworx -o jsonpath='{.items[0].metadata.name}')
+----
+
+Next, use `oc` to execute `pxctl status` within a pod defined by
+the `PX_POD` environment variable to check the Portworx StorageCluster
+status:
+
+[source,sh,role=execute]
+----
+oc exec -it $PX_POD -n portworx -- /opt/pwx/bin/pxctl status --color
+----
+
+We now have a 3-node Portworx cluster up and running!
+
+Let's dive into our cluster status:
+
+* All 3 nodes are online and use Kubernetes node names as the Portworx node IDs.
+* Portworx detected the block device media type (for example
+`STORAGE_MEDIUM_NVME` or `STORAGE_MEDIUM_SSD`), and created a storage pool for those disks.
+If you have different types of disks, for example SSD and
+magnetic/rotational disk, a dedicated storage pool would be created for
+each type of device.
+
+To make things easier throughout the lab, let's create a `pxctl` shortcut. Later in this lab we will reboot a node. A Portworx pod on a node that is down can still report `Running` and `1/1` because nothing is left to update its status. If the shortcut picked that pod, every `pxctl` command would hang. The helper script below only picks a Portworx pod on a node that is `Ready`:
+
+[source,sh,role=execute]
+----
+cat << 'EOF' > ~/px-pod.sh
+#!/bin/bash
+# Print the name of a Ready Portworx pod that runs on a Ready node.
+READY=$(oc get nodes --no-headers 2>/dev/null | awk '$2=="Ready"{print $1}' | tr '\n' ' ')
+oc -n portworx get pods -l name=portworx -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.nodeName}{" "}{.status.containerStatuses[0].ready}{"\n"}{end}' 2>/dev/null \
+  | awk -v r="$READY" 'BEGIN{n=split(r,a," "); for(i=1;i<=n;i++) ok[a[i]]=1} $3=="true" && ($2 in ok) {print $1; exit}'
+EOF
+chmod +x ~/px-pod.sh
+
+echo "alias pxctl='oc exec -n portworx \$(~/px-pod.sh) -c portworx -- /opt/pwx/bin/pxctl'" >> ~/.bashrc
+
+source ~/.bashrc
+----
+
+Now test out the alias:
+
+[source,sh,role=execute]
+----
+pxctl status --color
+----
+
+=== Task: View the Portworx Console Plugin
+
+Because we enabled the console plugin when we installed the operator, Portworx is also available directly in the OpenShift Console.
+
+Switch to the OpenShift Console. After the StorageCluster is deployed, the console prompts you to refresh so that it can load the plugin. Refresh the page, then select `Portworx` in the navigation pane to see the health, capacity, and nodes of the cluster that we just created.
+
+== Install and Configure OpenShift Virtualization
+
+=== Task: Install the HyperConverged CR
+
+The OpenShift Virtualization operator has already been installed for our environment. Now that the Portworx StorageCluster has been deployed, we can create the `HyperConverged` object that actually deploys OpenShift Virtualization to our cluster.
+
+We can install the HyperConverged CR using the following command:
+
+[source,sh,role=execute]
+----
+cat << EOF | oc apply -f -
+---
+apiVersion: hco.kubevirt.io/v1beta1
+kind: HyperConverged
+metadata:
+  name: kubevirt-hyperconverged
+  namespace: openshift-cnv
+spec:
+  filesystemOverhead:
+    global: "0.08"
+  scratchSpaceStorageClass: px-cdi-scratch
+  vmStateStorageClass: px-rwx-file-kubevirt
+EOF
+----
+
+We are only setting a few options in the HyperConverged object:
+
+* `filesystemOverhead` reserves space for filesystem metadata when OpenShift sizes a virtual machine disk. Because of this setting, a VM disk PVC can be slightly larger than the disk size you requested.
+* `scratchSpaceStorageClass` is the StorageClass that the Containerized Data Importer (CDI) uses for temporary space when it imports or converts disk images.
+* `vmStateStorageClass` is the StorageClass used for persistent VM state, such as the virtual TPM (vTPM) needed by Windows guests. VM state needs ReadWriteMany (RWX) volumes in Filesystem mode.
+
+The installation can take a few moments. Wait for the HyperConverged object to report that it is available:
+
+[source,sh,role=execute]
+----
+oc wait hyperconverged kubevirt-hyperconverged -n openshift-cnv \
+  --for=condition=Available --timeout=15m
+----
+
+====
+[NOTE]
+
+It is also possible to install the Operator and HyperConverged object using the OpenShift UI. We have opted to use
+the CLI to make the process more repeatable.
+====
+
+== Storage Classes and Storage Profiles in OpenShift
+
+Storage Classes are a Kubernetes concept that allows an administrator
+to describe _classes_ of storage they offer. Storage Classes are
+unopinionated about what the class represents, but it may include things
+such as: quality-of-service levels, backup policies, or snapshot
+policies.
+
+Portworx storage classes offer a number of configuration parameters that
+can be used to configure the amount of replicas, encryption-at-rest,
+or I/O limits.
+
+Storage Classes are not specific to OpenShift or Virtualization, but we
+still need a storage class to provision virtual machine disks.
+
+=== Task: View existing storage classes
+
+Portworx deploys several pre-configured storage classes when the
+storage cluster is created. When the Portworx Operator detects the
+`HyperConverged` object that we just created, it also creates three
+StorageClasses for OpenShift Virtualization. To view the current storage classes run:
+
+[source,sh,role=execute]
+----
+oc get sc
+----
+
+All of the Portworx storage classes use the `pxd.portworx.com` CSI provisioner. The three classes for OpenShift Virtualization are:
+
+* `px-rwx-block-kubevirt` - ReadWriteMany (RWX) *block* volumes for virtual machine disks. RWX access is what makes live migration possible, and block mode gives better performance than a filesystem. This class is annotated as the default StorageClass for virtual machines.
+* `px-rwx-file-kubevirt` - RWX *filesystem* volumes for VM state, such as a vTPM. We referenced this class in the HyperConverged object.
+* `px-cdi-scratch` - temporary scratch space for CDI image operations. We also referenced this class in the HyperConverged object.
+
+Let's look at the configuration of the virtual machine disk class:
+
+[source,sh,role=execute]
+----
+oc get sc px-rwx-block-kubevirt -o yaml
+----
+
+Notice the following in the output:
+
+* The `storageclass.kubevirt.io/is-default-virt-class: "true"` annotation makes this the default StorageClass for virtual machine disks. It is separate from the cluster-wide default StorageClass, so containers and VMs can each have their own default.
+* The `repl` parameter sets the replication factor: the number of copies of each volume that Portworx keeps on different nodes.
+* The `provisioner` is set to `pxd.portworx.com`, which means this class uses the Portworx CSI driver.
+
+See the
+https://docs.portworx.com/portworx-enterprise/provision-storage/kubevirt-vms/manage-kubevirt-vms-rwx-block/openshift[Portworx Documentation^] for further details.
+
+Let's check the PVCs for the VM boot images. Because `px-rwx-block-kubevirt` is the default class for virtual machines, OpenShift Virtualization imports its boot images onto Portworx. You should see the status as `Bound` and the Access Mode as `RWX`.
+
+[source,sh,role=execute]
+----
+oc get pvc -n openshift-virtualization-os-images
+----
+
+[source,text]
+----
+NAME                          STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS            VOLUMEATTRIBUTESCLASS   AGE
+centos-stream10-1983db89651a   Bound    pvc-456a4e64-de3c-4197-bed1-b9e228c492fd   30Gi       RWX            px-rwx-block-kubevirt   <unset>                 21m
+centos-stream9-27092766a264    Bound    pvc-ea4e2f73-06c5-4e4f-a15d-60690c70ca2e   30Gi       RWX            px-rwx-block-kubevirt   <unset>                 21m
+fedora-b37907f3bbf8            Bound    pvc-ba0f44a9-7741-4607-89be-1ee68be04d4e   30Gi       RWX            px-rwx-block-kubevirt   <unset>                 21m
+rhel10-c03936a065f2            Bound    pvc-4b4eaf2f-a841-49b4-be8f-94c52ce5a0f3   30Gi       RWX            px-rwx-block-kubevirt   <unset>                 21m
+rhel9-ab4ec16077fe             Bound    pvc-d79b1530-062a-4176-8cdb-89dfe89297be   30Gi       RWX            px-rwx-block-kubevirt   <unset>                 21m
+----
+
+====
+[NOTE]
+The boot images can take a few minutes to import. If some PVCs are not `Bound` yet, wait a minute and run the command again.
+====
+
+=== Task: Install Virtctl
+
+Many functions we will use rely on a utility called `virtctl`. Virtctl allows us to interface with our virtual
+machine through the control plane of OpenShift. This means that we will not have to configure OpenShift Networking
+to interact with our virtual machines. OpenShift Virtualization makes the matching version of `virtctl` tool available for download from our cluster.
+
+[source,sh,role=execute]
+----
+wget $(oc get consoleclidownload virtctl-clidownloads-kubevirt-hyperconverged  -o json | jq -r '.spec.links[] | select(.text == "Download virtctl for Linux for x86_64") | .href')
+
+tar -xvf virtctl.tar.gz
+chmod +x virtctl
+sudo mv virtctl /usr/local/bin
+----
+
+=== Task: View the Storage Profile
+
+Storage Profiles provide recommended storage settings based on an
+associated storage class. Storage profiles are automatically created in
+OpenShift when a new storage class is created.
+
+Portworx sets desired parameters when using the CSI provider, including
+the preferred access mode.
+
+We can see the current configuration of the storage profile for our VM disk class by
+running:
+
+[source,sh,role=execute]
+----
+oc get storageprofile px-rwx-block-kubevirt -o yaml
+----
+
+We can see under the `.status` node a list of access modes. The first
+access mode, RWX in block mode, will be preferred.
+
+For further details on storage profiles, see the
+https://docs.redhat.com/en/documentation/openshift_container_platform/4.22/html/virtualization/storage[OpenShift 4.22
+documentation^].
+
+
+With Portworx and OpenShift Virtualization installed and configured, we are now ready to move on to the next lab.

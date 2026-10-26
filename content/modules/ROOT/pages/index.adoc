@@ -1,34 +1,18 @@
 = {lab_name}
 
-Use the Portworx Data Platform to manage persistant storage in an OpenShift 4 cluster.
+== Introduction
 
-Portworx is the #1 leader in Kubernetes storage and data management. Together, Portworx and Red Hat® OpenShift® Container Platform help you operate, scale, and secure Kubernetes and application databases anywhere with just a few clicks.
+In this lab you will learn how to operate OpenShift Virtualization 4.22 with Portworx Enterprise 3.7 to provide high availability (HA), Live Migrations, Snapshots, automated capacity management with Autopilot, and Dynamic Application I/O Control.
 
-This hands-on demo provides a Portworx deployment on OpenShift Container Platform and covers the following topics:
+This lab focuses on hands-on learning.
 
-* Overview of OpenShift Container Platform interaction
-
-* Portworx OpenShift Operator
-
-* Application deployment for demos
-
-* Use cases demos
+image::px-logo.jpg[px-logo]
 
 === Lab Access
 
-The terminal window to your right has the `oc` command we will use during the lab already installed, but we need to login to the cluster and set our default project.
+The terminal window to your right is already logged into the lab environment as the `{bastion_ssh_user_name}` user via `ssh`.
+All steps in this lab are to be completed as the `{bastion_ssh_user_name}` user.
 
+The OpenShift Console can be accessed by opening a new tab in your browser at {openshift_cluster_console_url}[OpenShift Web Console^].
 
-[,bash,role="execute",subs="attributes"]
-----
-oc login {openshift_api_url} -u {openshift_cluster_admin_username}  -p {openshift_cluster_admin_password} --insecure-skip-tls-verify=true
-----
-
-Next, run this command to set the current project to 'default'. 
-
-[,bash,role="execute"]
-----
-oc project default
-----
-
-NOTE:  The lab guide is available in Asciidoc on link:https://github.com/PureStorage-OpenConnect/pxe-rhdp-lab/tree/main/content/modules/ROOT/pages[Github] if you wish to save it for future reference.
+Log in using the username `{openshift_cluster_admin_username}` and password `{openshift_cluster_admin_password}`.
