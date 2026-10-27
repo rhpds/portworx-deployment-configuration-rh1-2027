@@ -122,15 +122,19 @@ Start by logging in to the OpenShift console if you haven't already.
 
 === Task 1: Create a new VM
 
-Navigate to the `Virtualization` > `Catalog` menu
+Navigate to the `Virtualization` > `VirtualMachines` menu
 
-Select our `vmtest` project in the project drop-down at the top of the interface
+Select `Create Virtual Machine` from the welcome screen
 
-On the `InstanceTypes` tab, select the `centos-stream9` bootable volume. We can also use the default instance
-type.
+Select a name for the virtual machine, click the edit icon by the location and select the `vmtest` project, then click next
 
-Scroll down to the `VirtualMachine details` section. Verify that our StorageClass is set to `px-rwx-block-kubevirt` and click
-`Create VirtualMachine`
+Select `Other Linux` and the `centos.stream9` image.
+
+Select the `centos-stream9` boot source (which is the downloaded image we saw in the last lesson)
+
+Leave the default General Purpose instance
+
+Select `next` and `Create VirtualMachine`
 
 image:02-newvm.gif[New VM]
 
