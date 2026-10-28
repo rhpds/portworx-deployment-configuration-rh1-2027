@@ -102,7 +102,7 @@ cat << EOF > $HOME/px-spec.yaml
 kind: StorageCluster
 apiVersion: core.libopenstorage.org/v1
 metadata:
-  name: px-cluster-f7df49ec-fce1-43d9-aaa2-e10bf3d5fa63
+  name: px-cluster
   namespace: portworx
   annotations:
     portworx.io/is-openshift: "true"
@@ -144,7 +144,6 @@ spec:
       enabled: false
     prometheus:
       exportMetrics: true
-  env:
 EOF
 ----
 
@@ -158,7 +157,7 @@ cat -n $HOME/px-spec.yaml
 The StorageCluster CR controls the configuration of the Portworx cluster. Some of the important settings are:
 
 * `portworx.io/is-openshift: "true"` tells Portworx that we are installing on an OpenShift cluster.
-* `image` is the Portworx Enterprise version we are installing: `3.7.1`. Upgrading Portworx is as easy as changing this line.
+* `image` is the Portworx Enterprise version we are installing: `3.7.1`. Upgrading Portworx is as straightforward as changing this line.
 * `cloudStorage.deviceSpecs` is our disk configuration. Portworx uses a feature called *Cloud Drives* to create a 150 GB gp3 disk for each storage node and attach it automatically as part of the installation.
 * `stork` enables STORK (Storage Orchestrator Runtime for Kubernetes), which makes the OpenShift scheduler storage aware. We will see this in action during the high availability exercise.
 * `autopilot.enabled` turns on Portworx Autopilot, which we will use for automated capacity management and dynamic I/O control at the end of this lab.
