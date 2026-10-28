@@ -261,7 +261,7 @@ Let's expand the virtual machine's filesystem:
 ----
 virtctl ssh cloud-user@vm/centos-stream9-autopilot -n vmtest \
   -i ~/.ssh/id_rsa -t "-o StrictHostKeyChecking=no" \
-  -c 'yes Fix | sudo parted --script --fix /dev/vdb print ; yes | sudo parted ---pretend-input-tty /dev/vdb resizepart 1 100% ; sudo resize2fs /dev/vdb1'
+  -c 'yes Fix | sudo parted --script --fix /dev/vdb print ; yes | sudo parted --pretend-input-tty /dev/vdb resizepart 1 100% ; sudo resize2fs /dev/vdb1'
 ----
 
 We can now observe the free space in our virtual machine by running:
