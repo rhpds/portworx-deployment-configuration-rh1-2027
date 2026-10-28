@@ -106,6 +106,7 @@ metadata:
   namespace: portworx
   annotations:
     portworx.io/is-openshift: "true"
+    portworx.io/is-eks: "true"
     portworx.io/misc-args: "-rt_opts small_conf=1 -T px-storev2 "
     portworx.io/preflight-check: "true"
 spec:
