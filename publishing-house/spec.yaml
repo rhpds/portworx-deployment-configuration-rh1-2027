@@ -148,6 +148,6 @@ approval_checklist:
     peak_environments: null
     cost_per_run_est: ""
     provisioning_time_est: ""
-    agnosticv_base_ci: ""
+    agnosticv_base_ci: "rh1-2027/lb8002-portworx-aws"
     approved_by: ""
     rejections: []
