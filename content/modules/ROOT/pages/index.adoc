@@ -6,6 +6,8 @@ In this lab you will learn how to operate OpenShift Virtualization 4.22 with Por
 
 This lab focuses on hands-on learning.
 
+image::px-logo.jpg[px-logo]
+
 === Lab Access
 
 The terminal window to your right is already logged into the lab environment as the `{bastion_ssh_user_name}` user via `ssh`.

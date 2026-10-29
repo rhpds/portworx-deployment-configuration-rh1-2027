@@ -149,8 +149,6 @@ It can take a few minutes for the VM to boot for the first time
 Explore the tabs for this virtual machine. We can view metrics,
 configure snapshots, and view the YAML configuration.
 
-image:create-vm-06.png[Interact with VM]
-
 ====
 [NOTE]
 The Virtual Machine name will be different in your environment
