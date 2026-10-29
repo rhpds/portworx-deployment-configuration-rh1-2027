@@ -1,7 +1,7 @@
 ---
 site:
-  title: My Project
-  url: https://github.com/rhpds/my-project
+  title: Portworx Enterprise Deployment and Configuration on OpenShift
+  url: https://github.com/rhpds/portworx-deployment-configuration-rh1-2027
   start_page: modules::index.adoc
 
 content:
