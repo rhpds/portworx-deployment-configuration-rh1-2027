@@ -1,15 +1,88 @@
 ---
-# HEALTHCHECK — Quick environment readiness check
-# Runs post-provisioning to verify the lab environment is functional.
-# Should complete in under 60 seconds.
-#
-# Exit 0 = healthy, non-zero = unhealthy.
-
-- name: "Environment Health Check"
+- name: Health Check — Portworx Enterprise Deployment and Configuration Lab
   hosts: localhost
-  connection: local
   gather_facts: false
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true) }}"
+
   tasks:
-    - name: "TODO: Implement health checks"
+
+    - name: Check OCP API is accessible
+      kubernetes.core.k8s_info:
+        kind: Node
+      register: nodes_result
+      failed_when: nodes_result.resources | length == 0
+
+    - name: Verify three worker nodes are Ready
+      ansible.builtin.assert:
+        that:
+          - >-
+            nodes_result.resources
+            | selectattr('metadata.labels', 'defined')
+            | selectattr('metadata.labels["node-role.kubernetes.io/worker"]', 'defined')
+            | list | length >= 3
+        fail_msg: "Expected at least 3 worker nodes; found {{ nodes_result.resources | selectattr('metadata.labels[\"node-role.kubernetes.io/worker\"]', 'defined') | list | length }}"
+
+    - name: Check all nodes are Ready
+      ansible.builtin.assert:
+        that:
+          - >-
+            nodes_result.resources
+            | selectattr('status.conditions', 'defined')
+            | map(attribute='status.conditions')
+            | map('selectattr', 'type', 'equalto', 'Ready')
+            | map('selectattr', 'status', 'equalto', 'True')
+            | map('list')
+            | select('ne', [])
+            | list | length == nodes_result.resources | length
+        fail_msg: "One or more nodes are not Ready"
+
+    - name: Check OpenShift Virtualization operator is installed
+      kubernetes.core.k8s_info:
+        api_version: operators.coreos.com/v1alpha1
+        kind: ClusterServiceVersion
+        namespace: openshift-cnv
+        label_selectors:
+          - operators.coreos.com/kubevirt-hyperconverged.openshift-cnv
+      register: cnv_csv
+      failed_when: cnv_csv.resources | length == 0
+
+    - name: Verify OCP Virt CSV is Succeeded
+      ansible.builtin.assert:
+        that:
+          - cnv_csv.resources[0].status.phase == "Succeeded"
+        fail_msg: "OCP Virt CSV phase is {{ cnv_csv.resources[0].status.phase }}, expected Succeeded"
+
+    - name: Check HyperConverged is NOT deployed (student task -- correct start state)
+      kubernetes.core.k8s_info:
+        api_version: hco.kubevirt.io/v1beta1
+        kind: HyperConverged
+        namespace: openshift-cnv
+        name: kubevirt-hyperconverged
+      register: hco_result
+      failed_when: false
+
+    - name: Check Portworx operator is NOT pre-installed (student task -- correct start state)
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: portworx
+      register: portworx_ns
+      failed_when: false
+
+    - name: Verify Showroom is accessible
+      ansible.builtin.uri:
+        url: "https://{{ lookup('env', 'showroom_primary_view_url') | default(lookup('env', 'SHOWROOM_URL'), true) }}"
+        validate_certs: false
+        status_code: 200
+      when: lookup('env', 'showroom_primary_view_url') != '' or lookup('env', 'SHOWROOM_URL') != ''
+      ignore_errors: true
+
+    - name: Report health check summary
       ansible.builtin.debug:
-        msg: "Replace this task with checks that verify the environment is ready"
+        msg:
+          - "OCP API: OK ({{ nodes_result.resources | length }} nodes)"
+          - "Workers Ready: OK"
+          - "OCP Virt operator: OK ({{ cnv_csv.resources[0].status.phase }})"
+          - "HyperConverged deployed: {{ hco_result.resources | length > 0 }} (expected false)"
+          - "Portworx pre-installed: {{ portworx_ns.resources | length > 0 }} (expected false)"
