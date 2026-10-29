@@ -24,5 +24,5 @@ Defined in `defaults/main.yml`:
 ```yaml
 - hosts: all
   roles:
-    - <your_namespace>.<your_collection_name>.example
+    - portworx_deployment_configuration_rh1_2027.automation.example
 ```

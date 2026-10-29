@@ -1,0 +1,10 @@
+---
+namespace: "portworx_deployment_configuration_rh1_2027"
+name: "automation"
+version: "1.0.0"
+readme: README.md
+authors:
+  - "rickgcv rgarciac@redhat.com"
+description: "Starter collection for this project's custom Ansible automation."
+license: []
+repository: "https://github.com/rhpds/portworx-deployment-configuration-rh1-2027"
