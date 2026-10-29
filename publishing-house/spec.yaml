@@ -31,31 +31,31 @@ spec:
     - id: module-01
       title: "Overview of Kube Datastore"
       duration_min: 10
-      status: not_started
+      status: in_progress
     - id: module-02
       title: "Installing Portworx Enterprise on OpenShift"
       duration_min: 15
-      status: not_started
+      status: in_progress
     - id: module-03
       title: "Storage and Dynamic Storage Pools"
       duration_min: 20
-      status: not_started
+      status: in_progress
     - id: module-04
       title: "Deploying Demo Workloads"
       duration_min: 25
-      status: not_started
+      status: in_progress
     - id: module-05
       title: "Failover Exercise"
       duration_min: 20
-      status: not_started
+      status: in_progress
     - id: module-06
       title: "Manual Pool Relocate"
       duration_min: 15
-      status: not_started
+      status: in_progress
     - id: module-07
       title: "Discussion: Auto-Rebalancing and Multiple Back-ends"
       duration_min: 10
-      status: not_started
+      status: in_progress
   environment:
     platform: "ocp"            # ocp | rhel-vms — determines which sizing fields apply
     topology: "per-student"    # shared-cluster | per-student | cnv-pool
@@ -98,7 +98,7 @@ spec:
 development:
   automation:
     ansible:
-      status: not_started
+      status: complete
   e2e:
     status: not_started
   healthCheck:
