@@ -157,7 +157,7 @@ cat -n $HOME/px-spec.yaml
 The StorageCluster CR controls the configuration of the Portworx cluster. Some of the important settings are:
 
 * `portworx.io/is-openshift: "true"` tells Portworx that we are installing on an OpenShift cluster.
-* 'portworx.io/is-eks: "true"` tells portworx to use AWS EBS volumes as the underlying storage.
+* `portworx.io/is-eks: "true"` tells Portworx to use AWS EBS volumes as the underlying storage.
 * `image` is the Portworx Enterprise version we are installing: `3.7.1`. Upgrading Portworx is as straightforward as changing this line.
 * `cloudStorage.deviceSpecs` is our disk configuration. Portworx uses a feature called *Cloud Drives* to create a 150 GB gp3 disk for each storage node and attach it automatically as part of the installation.
 * `stork` enables STORK (Storage Orchestrator Runtime for Kubernetes), which makes the OpenShift scheduler storage aware. We will see this in action during the high availability exercise.

@@ -6,7 +6,7 @@ In this lab you will learn how to operate OpenShift Virtualization 4.22 with Por
 
 This lab focuses on hands-on learning.
 
-image::px-logo.jpg[px-logo]
+image::px-logo.png[px-logo]
 
 === Lab Access
 
