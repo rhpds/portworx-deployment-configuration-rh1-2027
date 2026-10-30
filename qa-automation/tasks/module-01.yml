@@ -1,0 +1,150 @@
+---
+# pxe-osv-01.adoc: validate installed outcomes, do not reinstall the lab.
+- name: Module 01 - Find a healthy pxctl target
+  ansible.builtin.include_tasks: pxctl-target.yml
+
+- name: Module 01 - Find worker nodes by role label
+  kubernetes.core.k8s_info:
+    kind: Node
+    label_selectors: [node-role.kubernetes.io/worker]
+  register: e2e_workers
+
+- name: Module 01 - Require all nodes Ready and at least three workers
+  ansible.builtin.assert:
+    that:
+      - e2e_ready_nodes | length == e2e_nodes.resources | length
+      - e2e_workers.resources | length >= 3
+
+- name: Module 01 - Verify three online Portworx storage nodes
+  ansible.builtin.command:
+    argv:
+      - oc
+      - exec
+      - -n
+      - portworx
+      - "{{ e2e_px_pod }}"
+      - -c
+      - portworx
+      - --
+      - /opt/pwx/bin/pxctl
+      - status
+  register: e2e_px_status
+  changed_when: false
+  failed_when: >-
+    e2e_px_status.rc != 0 or
+    '3 node(s) with storage (3 online)' not in e2e_px_status.stdout
+
+- name: Module 01 - Verify HyperConverged is Available
+  kubernetes.core.k8s_info:
+    api_version: hco.kubevirt.io/v1beta1
+    kind: HyperConverged
+    namespace: openshift-cnv
+    name: kubevirt-hyperconverged
+    wait: true
+    wait_condition:
+      type: Available
+      status: 'True'
+    wait_timeout: 900
+  register: e2e_hco
+  failed_when: e2e_hco.resources | length != 1
+
+- name: Module 01 - Verify Portworx storage classes
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+    name: "{{ item }}"
+  loop: [px-rwx-block-kubevirt, px-rwx-file-kubevirt, px-cdi-scratch]
+  register: e2e_storageclasses
+
+- name: Module 01 - Assert CSI driver and VM default
+  ansible.builtin.assert:
+    that:
+      - item.resources | length == 1
+      - item.resources[0].provisioner == 'pxd.portworx.com'
+      - >-
+        item.item != 'px-rwx-block-kubevirt' or
+        item.resources[0].metadata.annotations['storageclass.kubevirt.io/is-default-virt-class']
+        | default('false') == 'true'
+  loop: "{{ e2e_storageclasses.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Module 01 - Get VM storage profile
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: StorageProfile
+    name: px-rwx-block-kubevirt
+  register: e2e_storageprofile
+
+- name: Module 01 - Assert RWX Block storage profile
+  ansible.builtin.assert:
+    that:
+      - e2e_storageprofile.resources | length == 1
+      - >-
+        e2e_storageprofile.resources[0].status.claimPropertySets
+        | selectattr('volumeMode', 'equalto', 'Block')
+        | selectattr('accessModes', 'contains', 'ReadWriteMany') | list | length > 0
+
+- name: Module 01 - Get CentOS Stream 9 boot source
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataSource
+    namespace: openshift-virtualization-os-images
+    name: centos-stream9
+  register: e2e_boot_source
+
+- name: Module 01 - Assert boot source is Ready
+  ansible.builtin.assert:
+    that:
+      - e2e_boot_source.resources | length == 1
+      - >-
+        e2e_boot_source.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready')
+        | selectattr('status', 'equalto', 'True') | list | length > 0
+
+- name: Module 01 - Get Portworx deployments
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    namespace: portworx
+  register: e2e_px_deployments
+
+- name: Module 01 - Require Available STORK and Autopilot
+  ansible.builtin.assert:
+    that:
+      - >-
+        e2e_px_deployments.resources | selectattr('metadata.name', 'search', item)
+        | selectattr('status.availableReplicas', 'defined')
+        | selectattr('status.availableReplicas', 'ge', 1) | list | length > 0
+  loop: [stork, autopilot]
+
+- name: Module 01 - Get console plugin configuration
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: e2e_console
+
+- name: Module 01 - Require enabled Portworx console plugin
+  ansible.builtin.assert:
+    that:
+      - e2e_console.resources | length == 1
+      - >-
+        e2e_console.resources[0].spec.plugins | default([])
+        | select('search', 'portworx') | list | length > 0
+
+- name: Module 01 - Get monitoring configuration
+  kubernetes.core.k8s_info:
+    kind: ConfigMap
+    namespace: openshift-monitoring
+    name: cluster-monitoring-config
+  register: e2e_monitoring
+
+- name: Module 01 - Require user workload monitoring enabled
+  ansible.builtin.assert:
+    that:
+      - e2e_monitoring.resources | length == 1
+      - (e2e_monitoring.resources[0].data['config.yaml'] | from_yaml).enableUserWorkload | bool
+
+- name: Module 01 - Report validation
+  ansible.builtin.debug:
+    msg: 'PASS module-01: installed Portworx, Virtualization and storage integration'

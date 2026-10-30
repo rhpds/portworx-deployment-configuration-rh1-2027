@@ -1,0 +1,51 @@
+---
+- name: Module 06 - Request smoke PVC capacity
+  kubernetes.core.k8s:
+    state: patched
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+    name: data
+    definition:
+      spec:
+        resources:
+          requests:
+            storage: "{{ e2e_io_step.size }}"
+
+- name: Module 06 - Wait for expanded PVC capacity
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+    name: data
+  register: e2e_io_pvc
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_io_pvc.resources | length == 1
+    - e2e_io_pvc.resources[0].status.phase | default('') == 'Bound'
+    - e2e_io_pvc.resources[0].status.capacity.storage | default('') == e2e_io_step.size
+
+- name: Module 06 - Wait for expected read and write IOPS limits
+  kubernetes.core.k8s_exec:
+    namespace: portworx
+    pod: "{{ e2e_px_pod }}"
+    container: portworx
+    command: "/opt/pwx/bin/pxctl volume inspect {{ e2e_io_pvc.resources[0].spec.volumeName }}"
+  register: e2e_io_inspect
+  changed_when: false
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_io_inspect.rc == 0
+    - >-
+      e2e_io_inspect.stdout is search('(?im)^\s*Max\s*Read\s*IOPS\s*:\s*' ~ e2e_io_step.iops ~ '\s*$')
+    - >-
+      e2e_io_inspect.stdout is search('(?im)^\s*Max\s*Write\s*IOPS\s*:\s*' ~ e2e_io_step.iops ~ '\s*$')
+
+- name: Module 06 - Verify data survives online expansion
+  kubernetes.core.k8s_exec:
+    namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+    pod: io-smoke
+    command: cat /data/marker
+  register: e2e_io_marker
+  changed_when: false
+  failed_when: e2e_io_marker.rc != 0 or e2e_io_marker.stdout | trim != 'lb8002-e2e'

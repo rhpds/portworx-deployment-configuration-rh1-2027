@@ -1,0 +1,48 @@
+---
+- name: Find cluster nodes
+  kubernetes.core.k8s_info:
+    kind: Node
+  register: e2e_nodes
+
+- name: Reset healthy pxctl candidates
+  ansible.builtin.set_fact:
+    e2e_ready_nodes: []
+    e2e_px_candidates: []
+
+- name: Collect Ready node names
+  ansible.builtin.set_fact:
+    e2e_ready_nodes: "{{ e2e_ready_nodes + [item.metadata.name] }}"
+  loop: "{{ e2e_nodes.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when: >-
+    item.status.conditions | selectattr('type', 'equalto', 'Ready')
+    | selectattr('status', 'equalto', 'True') | list | length > 0
+
+- name: Find Portworx pods
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: portworx
+    label_selectors: [name=portworx]
+  register: e2e_px_pods
+
+- name: Select Ready Portworx pods on Ready nodes
+  ansible.builtin.set_fact:
+    e2e_px_candidates: "{{ e2e_px_candidates + [item.metadata.name] }}"
+  loop: "{{ e2e_px_pods.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - item.spec.nodeName | default('') in e2e_ready_nodes
+    - >-
+      item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True') | list | length > 0
+
+- name: Require a usable pxctl target
+  ansible.builtin.assert:
+    that: e2e_px_candidates | length > 0
+    fail_msg: No Ready Portworx pod on a Ready node
+
+- name: Save pxctl target
+  ansible.builtin.set_fact:
+    e2e_px_pod: "{{ e2e_px_candidates | first }}"

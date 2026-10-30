@@ -1,0 +1,72 @@
+---
+# pxe-osv-04.adoc: validate solver snapshot/restore evidence and guest outcome.
+- name: Module 04 - Get VM snapshots
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineSnapshot
+    namespace: "{{ e2e_namespace }}"
+  register: e2e_snapshots
+
+- name: Module 04 - Reset snapshot evidence
+  ansible.builtin.set_fact:
+    e2e_ready_snapshots: []
+    e2e_restore_verified: false
+
+- name: Module 04 - Collect Ready snapshots for the solver VM
+  ansible.builtin.set_fact:
+    e2e_ready_snapshots: "{{ e2e_ready_snapshots + [item.metadata.name] }}"
+  loop: "{{ e2e_snapshots.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - item.spec.source.name == e2e_vm
+    - item.status.readyToUse | default(false) | bool
+
+- name: Module 04 - Get restore records
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineRestore
+    namespace: "{{ e2e_namespace }}"
+  register: e2e_restores
+
+- name: Module 04 - Find completed restore from a Ready snapshot
+  ansible.builtin.set_fact:
+    e2e_restore_verified: true
+  loop: "{{ e2e_restores.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - item.spec.target.name == e2e_vm
+    - item.spec.virtualMachineSnapshotName in e2e_ready_snapshots
+    - item.status.complete | default(false) | bool
+
+- name: Module 04 - Require snapshot and restore evidence
+  ansible.builtin.assert:
+    that:
+      - e2e_ready_snapshots | length > 0
+      - e2e_restore_verified | bool
+    fail_msg: Run module 04 solver and retain its Ready snapshot and completed restore.
+
+- name: Module 04 - Verify restored guest fstab exists and is nonempty
+  ansible.builtin.command:
+    argv:
+      - virtctl
+      - ssh
+      - "cloud-user@vm/{{ e2e_vm }}"
+      - -n
+      - "{{ e2e_namespace }}"
+      - -i
+      - "{{ e2e_ssh_key }}"
+      - -t
+      - '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15'
+      - -c
+      - 'test -s /etc/fstab && cat /etc/fstab'
+  changed_when: false
+  register: e2e_restored_guest
+  failed_when: e2e_restored_guest.rc != 0 or e2e_restored_guest.stdout | trim | length == 0
+  async: 60
+  poll: 5
+
+- name: Module 04 - Report validation
+  ansible.builtin.debug:
+    msg: 'PASS module-04: Ready snapshot, completed restore and nonempty guest fstab'

@@ -1,0 +1,92 @@
+---
+# pxe-osv-05.adoc: require actual expansion evidence, not only an installed CRD.
+- name: Module 05 - Get Autopilot rule
+  kubernetes.core.k8s_info:
+    api_version: autopilot.libopenstorage.org/v1alpha1
+    kind: AutopilotRule
+    name: volume-resize
+  register: e2e_resize_rule
+
+- name: Module 05 - Require lab Autopilot selectors, threshold and action
+  ansible.builtin.assert:
+    that:
+      - e2e_resize_rule.resources | length == 1
+      - e2e_resize_rule.resources[0].spec.selector.matchLabels.expand == 'true'
+      - e2e_resize_rule.resources[0].spec.namespaceSelector.matchLabels.expand == 'true'
+      - >-
+        e2e_resize_rule.resources[0].spec.conditions.expressions
+        | selectattr('key', 'equalto', '100 * (px_volume_usage_bytes / px_volume_capacity_bytes)')
+        | selectattr('operator', 'equalto', 'Gt')
+        | selectattr('values', 'equalto', ['30']) | list | length > 0
+      - >-
+        e2e_resize_rule.resources[0].spec.actions
+        | selectattr('name', 'equalto', 'openstorage.io.action.volume/resize')
+        | selectattr('params.scalepercentage', 'equalto', '100')
+        | selectattr('params.maxsize', 'equalto', '20Gi') | list | length > 0
+
+- name: Module 05 - Get Autopilot namespace
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    name: "{{ e2e_namespace }}"
+  register: e2e_autopilot_namespace
+
+- name: Module 05 - Get expanded data PVC
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_namespace }}"
+    name: centos-stream9-autopilot-data-disk
+  register: e2e_autopilot_pvc
+
+- name: Module 05 - Require selected and expanded Portworx data disk
+  ansible.builtin.assert:
+    that:
+      - e2e_autopilot_namespace.resources | length == 1
+      - e2e_autopilot_namespace.resources[0].metadata.labels.expand | default('') == 'true'
+      - e2e_autopilot_pvc.resources | length == 1
+      - e2e_autopilot_pvc.resources[0].metadata.labels.expand | default('') == 'true'
+      - e2e_autopilot_pvc.resources[0].status.phase == 'Bound'
+      - e2e_autopilot_pvc.resources[0].spec.storageClassName == 'px-rwx-block-kubevirt'
+      - e2e_autopilot_pvc.resources[0].status.capacity.storage in ['10Gi', '20Gi']
+    fail_msg: Expected the lab's 5Gi disk to have doubled to 10Gi or 20Gi under Autopilot.
+
+- name: Module 05 - Get Autopilot events across namespaces
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Event
+    field_selectors:
+      - involvedObject.kind=AutopilotRule
+      - involvedObject.name=volume-resize
+  register: e2e_autopilot_events
+
+- name: Module 05 - Require completed Autopilot action evidence
+  ansible.builtin.assert:
+    that: >-
+      (e2e_autopilot_events.resources | selectattr('reason', 'defined')
+      | selectattr('reason', 'search', 'ActiveActionsTaken') | list | length > 0) or
+      (e2e_autopilot_events.resources | selectattr('message', 'defined')
+      | selectattr('message', 'search', 'ActiveActionsTaken') | list | length > 0)
+    fail_msg: No ActiveActionsTaken event for volume-resize. Run the solver promptly before Kubernetes events expire.
+
+- name: Module 05 - Verify guest filesystem grew beyond original 5Gi disk
+  ansible.builtin.command:
+    argv:
+      - virtctl
+      - ssh
+      - "cloud-user@vm/{{ e2e_autopilot_vm }}"
+      - -n
+      - "{{ e2e_namespace }}"
+      - -i
+      - "{{ e2e_ssh_key }}"
+      - -t
+      - '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15'
+      - -c
+      - >-
+        test "$(findmnt -n -o TARGET /data)" = /data &&
+        test "$(df -B1 --output=size /data | tail -1)" -gt 5368709120
+  changed_when: false
+  async: 60
+  poll: 5
+
+- name: Module 05 - Report validation
+  ansible.builtin.debug:
+    msg: 'PASS module-05: Autopilot resize action, expanded PVC and expanded guest filesystem'

@@ -1,0 +1,180 @@
+---
+# pxe-osv-06.adoc cleans up appio, so use a small isolated smoke fixture.
+# No fio benchmark: validate enforced limits, not bottleneck-dependent throughput.
+- name: Module 06 - Find a healthy pxctl target
+  ansible.builtin.include_tasks: pxctl-target.yml
+
+- name: Module 06 - Validate settling interval
+  ansible.builtin.assert:
+    that: e2e_autopilot_settle_seconds | int >= 30
+
+- name: Module 06 - Run isolated dynamic I/O smoke test
+  block:
+    - name: Module 06 - Allocate unique smoke namespace
+      kubernetes.core.k8s:
+        state: present
+        generate_name: lb8002-e2e-
+        definition:
+          apiVersion: v1
+          kind: Namespace
+      register: e2e_io_namespace
+
+    - name: Module 06 - Create smoke StorageClass with lab parameters
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: "px-{{ e2e_io_namespace.result.metadata.name }}"
+          provisioner: pxd.portworx.com
+          parameters:
+            repl: '3'
+            io_throttle_iops_scale_factor: '50'
+            io_throttle_min_iops: '300'
+            io_throttle_rd_iops: '1500'
+            io_throttle_wr_iops: '1500'
+            io_throttle_bw_scale_factor: '0.01'
+            io_throttle_min_bw: '50'
+            io_throttle_rd_bw: '400'
+            io_throttle_wr_bw: '400'
+          reclaimPolicy: Delete
+          volumeBindingMode: WaitForFirstConsumer
+          allowVolumeExpansion: true
+      register: e2e_io_class
+
+    - name: Module 06 - Create 10Gi smoke PVC
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: data
+            namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+          spec:
+            storageClassName: "{{ e2e_io_class.result.metadata.name }}"
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi
+
+    - name: Module 06 - Start lightweight PVC consumer
+      kubernetes.core.k8s:
+        state: present
+        wait: true
+        wait_timeout: 900
+        definition:
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: io-smoke
+            namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+          spec:
+            containers:
+              - name: workload
+                image: ghcr.io/kastenhq/kubestr:v0.4.36
+                command: [/bin/sh, -c, 'sleep 86400']
+                volumeMounts:
+                  - name: data
+                    mountPath: /data
+            volumes:
+              - name: data
+                persistentVolumeClaim:
+                  claimName: data
+
+    - name: Module 06 - Write a tiny persistence marker
+      kubernetes.core.k8s_exec:
+        namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+        pod: io-smoke
+        command: /bin/sh -c 'echo lb8002-e2e > /data/marker && sync'
+      register: e2e_io_marker_write
+      failed_when: e2e_io_marker_write.rc != 0
+
+    - name: Module 06 - Verify scaling and ceiling across online expansion
+      ansible.builtin.include_tasks: module-06-resize.yml
+      loop:
+        - {size: 10Gi, iops: '500'}
+        - {size: 20Gi, iops: '1000'}
+        - {size: 40Gi, iops: '1500'}
+      loop_control:
+        loop_var: e2e_io_step
+        label: "{{ e2e_io_step.size }} / {{ e2e_io_step.iops }} IOPS"
+
+    - name: Module 06 - Opt out of automatic I/O limit updates
+      kubernetes.core.k8s:
+        state: patched
+        kind: PersistentVolumeClaim
+        namespace: "{{ e2e_io_namespace.result.metadata.name }}"
+        name: data
+        definition:
+          metadata:
+            annotations:
+              portworx.io/throttle-auto-update: 'false'
+
+    - name: Module 06 - Disable IOPS limits manually
+      kubernetes.core.k8s_exec:
+        namespace: portworx
+        pod: "{{ e2e_px_pod }}"
+        container: portworx
+        command: "/opt/pwx/bin/pxctl volume update --max_iops off,off {{ e2e_io_pvc.resources[0].spec.volumeName }}"
+      register: e2e_io_disable
+      failed_when: e2e_io_disable.rc != 0
+
+    - name: Module 06 - Allow an Autopilot reconciliation interval
+      ansible.builtin.pause:
+        seconds: "{{ e2e_autopilot_settle_seconds }}"
+
+    - name: Module 06 - Inspect opted-out volume
+      kubernetes.core.k8s_exec:
+        namespace: portworx
+        pod: "{{ e2e_px_pod }}"
+        container: portworx
+        command: "/opt/pwx/bin/pxctl volume inspect {{ e2e_io_pvc.resources[0].spec.volumeName }}"
+      register: e2e_io_optout
+      failed_when: e2e_io_optout.rc != 0
+      changed_when: false
+
+    - name: Module 06 - Require limits still disabled after opt-out
+      ansible.builtin.assert:
+        that:
+          - e2e_io_optout.stdout | trim | length > 0
+          - >-
+            e2e_io_optout.stdout
+            | regex_findall('(?im)^\s*Max\s*(?:Read|Write)\s*IOPS\s*:\s*(\S+)')
+            | map('lower') | difference(['0', 'off', 'unlimited']) | length == 0
+
+  always:
+    - name: Module 06 - Remove only smoke namespace and its workloads
+      kubernetes.core.k8s:
+        state: absent
+        kind: Namespace
+        name: "{{ e2e_io_namespace.result.metadata.name }}"
+        wait: true
+        wait_timeout: 120
+      when: e2e_io_namespace.result.metadata.name is defined
+      register: e2e_io_namespace_cleanup
+      ignore_errors: true  # Attempt StorageClass cleanup even if namespace cleanup fails.
+
+    - name: Module 06 - Remove only smoke StorageClass
+      kubernetes.core.k8s:
+        state: absent
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: "{{ e2e_io_class.result.metadata.name }}"
+        wait: true
+        wait_timeout: 120
+      when: e2e_io_class.result.metadata.name is defined
+      register: e2e_io_class_cleanup
+      ignore_errors: true  # The following assertion reports cleanup failures.
+
+    - name: Module 06 - Require successful cleanup
+      ansible.builtin.assert:
+        that:
+          - not (e2e_io_namespace_cleanup is failed)
+          - not (e2e_io_class_cleanup is failed)
+        fail_msg: Check residual lb8002-e2e-* namespaces, px-lb8002-e2e-* classes and their PVs.
+
+- name: Module 06 - Report validation
+  ansible.builtin.debug:
+    msg: 'PASS module-06: 500/1000/1500 IOPS scaling, persistent online expansion and opt-out'

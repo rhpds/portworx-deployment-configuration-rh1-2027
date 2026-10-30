@@ -1,0 +1,58 @@
+---
+# pxe-osv-03.adoc: use solver migration evidence; never reboot a worker here.
+- name: Module 03 - Get migration records
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstanceMigration
+    namespace: "{{ e2e_namespace }}"
+  register: e2e_migrations
+
+- name: Module 03 - Reset migration evidence
+  ansible.builtin.set_fact:
+    e2e_migration_verified: false
+
+- name: Module 03 - Find successful cross-node migration of the solver VM
+  ansible.builtin.set_fact:
+    e2e_migration_verified: true
+  loop: "{{ e2e_migrations.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - item.spec.vmiName == e2e_vm
+    - item.status.phase | default('') == 'Succeeded'
+    - item.status.migrationState.sourceNode | default('') | length > 0
+    - item.status.migrationState.targetNode | default('') | length > 0
+    - item.status.migrationState.sourceNode | default('') != item.status.migrationState.targetNode | default('')
+
+- name: Module 03 - Require migration evidence
+  ansible.builtin.assert:
+    that: e2e_migration_verified | bool
+    fail_msg: No successful cross-node migration record. Run the module solver and retain its migration evidence.
+
+- name: Module 03 - Verify persistent guest data
+  ansible.builtin.command:
+    argv:
+      - virtctl
+      - ssh
+      - "cloud-user@vm/{{ e2e_vm }}"
+      - -n
+      - "{{ e2e_namespace }}"
+      - -i
+      - "{{ e2e_ssh_key }}"
+      - -t
+      - '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15'
+      - -c
+      - 'cat ~/text'
+  changed_when: false
+  register: e2e_persistence
+  failed_when: >-
+    e2e_persistence.rc != 0 or
+    e2e_persistence.stdout | trim != 'Hello from Red Hat and Portworx'
+  async: 60
+  poll: 5
+
+- name: Module 03 - Report validation scope
+  ansible.builtin.debug:
+    msg: >-
+      PASS module-03: successful cross-node migration and intact guest marker.
+      Module 01 validates recovered node/storage health. No node failure is injected or proven by this validator.
