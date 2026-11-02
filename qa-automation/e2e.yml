@@ -7,9 +7,9 @@
   gather_facts: false
   module_defaults:
     group/kubernetes.core.k8s:
-      kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true) }}"
+      kubeconfig: "{{ k8s_kubeconfig | default(lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true)) }}"
   environment:
-    KUBECONFIG: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true) }}"
+    KUBECONFIG: "{{ k8s_kubeconfig | default(lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true)) }}"
   vars:
     e2e_namespace: vmtest
     e2e_vm: centos-stream9-example

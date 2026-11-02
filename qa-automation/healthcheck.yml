@@ -4,7 +4,7 @@
   gather_facts: false
   module_defaults:
     group/kubernetes.core.k8s:
-      kubeconfig: "{{ lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true) }}"
+      kubeconfig: "{{ k8s_kubeconfig | default(lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true)) }}"
 
   tasks:
 
@@ -14,15 +14,18 @@
       register: nodes_result
       failed_when: nodes_result.resources | length == 0
 
+    - name: Get worker nodes
+      kubernetes.core.k8s_info:
+        kind: Node
+        label_selectors:
+          - "node-role.kubernetes.io/worker"
+      register: worker_nodes_result
+
     - name: Verify three worker nodes are Ready
       ansible.builtin.assert:
         that:
-          - >-
-            nodes_result.resources
-            | selectattr('metadata.labels', 'defined')
-            | selectattr('metadata.labels["node-role.kubernetes.io/worker"]', 'defined')
-            | list | length >= 3
-        fail_msg: "Expected at least 3 worker nodes; found {{ nodes_result.resources | selectattr('metadata.labels[\"node-role.kubernetes.io/worker\"]', 'defined') | list | length }}"
+          - worker_nodes_result.resources | length >= 3
+        fail_msg: "Expected at least 3 worker nodes; found {{ worker_nodes_result.resources | length }}"
 
     - name: Check all nodes are Ready
       ansible.builtin.assert:
