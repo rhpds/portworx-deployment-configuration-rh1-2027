@@ -28,27 +28,27 @@ spec:
     - "Execute a storage-level failover, verify workload continuity after a simulated node failure, and analyze per-VM storage telemetry"
     - "Perform a manual pool relocate operation and verify data integrity across storage tiers"
   modules:
-    - id: pxe-osv-01
+    - id: module-01
       title: "Install Portworx"
       duration_min: 15
       status: complete
-    - id: pxe-osv-02
+    - id: module-02
       title: "Create a New VM"
       duration_min: 25
       status: complete
-    - id: pxe-osv-03
+    - id: module-03
       title: "Live Migrations and HA"
       duration_min: 20
       status: complete
-    - id: pxe-osv-04
+    - id: module-04
       title: "Virtual Machine Snapshots"
       duration_min: 20
       status: complete
-    - id: pxe-osv-05
+    - id: module-05
       title: "Autopilot"
       duration_min: 20
       status: complete
-    - id: pxe-osv-06
+    - id: module-06
       title: "Dynamic App I/O Control"
       duration_min: 20
       status: complete
