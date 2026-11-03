@@ -4,3 +4,4 @@
 * xref:pxe-osv-04.adoc[4. Virtual Machine Snapshots]
 * xref:pxe-osv-05.adoc[5. Autopilot]
 * xref:pxe-osv-06.adoc[6. Dynamic App I/O Control]
+* xref:conclusion.adoc[Conclusion]

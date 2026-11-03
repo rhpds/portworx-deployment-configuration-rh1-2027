@@ -1,0 +1,17 @@
+== Conclusion
+
+Congratulations on completing the Portworx Enterprise Deployment and Configuration lab.
+
+Over the course of this lab you:
+
+* Installed Portworx Enterprise on OpenShift using the Operator catalog and a StorageCluster custom resource, and verified distributed storage health with `pxctl`
+* Deployed a virtual machine on RWX block storage provisioned by Portworx and observed per-VM storage telemetry in the OpenShift console
+* Performed live VM migration between nodes and verified automatic storage-level failover using STORK
+* Created and restored a VM snapshot, confirming data integrity across the snapshot and restore cycle
+* Configured Autopilot rules for automatic PVC expansion and dynamic I/O control
+
+=== Next Steps
+
+* Explore the https://docs.portworx.com[Portworx documentation] for production sizing guidance, multi-cloud replication, and disaster recovery configuration
+* Review https://www.redhat.com/en/technologies/cloud-computing/openshift/virtualization[OpenShift Virtualization] resources for additional VM workload patterns
+* Talk to your Red Hat account team about Portworx Enterprise licensing and support options
