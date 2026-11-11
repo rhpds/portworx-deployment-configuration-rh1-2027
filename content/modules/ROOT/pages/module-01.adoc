@@ -18,9 +18,7 @@ You can connect to the terminal in the windows to the right.
 ====
 [TIP]
 
-The {openshift_cluster_console_url}[OpenShift Web Console^] tab will open in a new browser window.
-
-The username is `{openshift_cluster_admin_username}` and the password is `{openshift_cluster_admin_password}`
+The *OCP Console* tab at the top of this page is already open. If prompted to log in, use username `{openshift_cluster_admin_username}` and password `{openshift_cluster_admin_password}`.
 ====
 
 === Task: Exploring the CLI
