@@ -1,0 +1,49 @@
+= Lab Reference
+
+A quick reference of all credentials, URLs, and namespaces for this lab.
+
+== Credentials and Access
+
+[cols="1,3",options="header"]
+|===
+|Resource |Value
+|OCP Console |{openshift_cluster_console_url}
+|Username |`{openshift_cluster_admin_username}`
+|Password |`{openshift_cluster_admin_password}`
+|Bastion user |`{bastion_ssh_user_name}`
+|===
+
+The *OCP Console* tab and the *>_ terminal* tab are both available at the top of this page.
+The terminal is already logged in as `{bastion_ssh_user_name}` and authenticated to the OCP cluster via `oc`.
+
+== Key Namespaces
+
+[cols="1,2",options="header"]
+|===
+|Namespace |Contents
+|`portworx` |Portworx operator, StorageCluster, Autopilot
+|`openshift-virtualization-os-images` |OS image DataSources for VM templates
+|`vmtest` |Virtual machines created in this lab
+|===
+
+== Useful Commands
+
+Verify Portworx cluster status:
+[source,sh,role=execute]
+----
+pxctl status
+----
+
+List all Portworx volumes:
+[source,sh,role=execute]
+----
+pxctl volume list
+----
+
+Watch Autopilot rule events:
+[source,sh,role=execute]
+----
+oc get events --field-selector involvedObject.kind=AutopilotRule \
+  --all-namespaces --sort-by .lastTimestamp \
+  -o custom-columns=MESSAGE:.message
+----
