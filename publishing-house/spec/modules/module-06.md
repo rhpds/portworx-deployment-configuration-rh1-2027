@@ -38,3 +38,9 @@ Students use Portworx Dynamic Application I/O Control to tie a volume's IOPS lim
 6. Patch PVC to 40 GiB; confirm limits clamp to the 1500 ceiling even though `40 × 50 = 2000`.
 7. Annotate the PVC with `portworx.io/throttle-auto-update=false` to opt out, then run `pxctl volume update --max_iops off,off ${VOL}` to remove limits entirely.
 8. Delete the `appio` project and `px-dynamic-io` StorageClass.
+
+### Key Takeaways
+
+- Portworx Dynamic App I/O Control caps read/write IOPS per PVC using pxctl volume update — no kernel or guest changes required
+- Limits scale automatically with PVC capacity when managed by Autopilot; manually set limits persist until explicitly removed
+- Opting out of auto-update retains the last manually set limit; use `portworx.io/throttle-auto-update=false` on the PVC annotation
