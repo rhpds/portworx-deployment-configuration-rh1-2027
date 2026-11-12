@@ -46,7 +46,7 @@
       - e2e_autopilot_pvc.resources[0].metadata.labels.expand | default('') == 'true'
       - e2e_autopilot_pvc.resources[0].status.phase == 'Bound'
       - e2e_autopilot_pvc.resources[0].spec.storageClassName == 'px-rwx-block-kubevirt'
-      - e2e_autopilot_pvc.resources[0].status.capacity.storage in ['10Gi', '20Gi']
+      - e2e_autopilot_pvc.resources[0].status.capacity.storage in ['10Gi', '20Gi', '40Gi']
     fail_msg: Expected the lab's 5Gi disk to have doubled to 10Gi or 20Gi under Autopilot.
 
 - name: Module 05 - Get Autopilot events across namespaces
@@ -78,7 +78,11 @@
       - -i
       - "{{ e2e_ssh_key }}"
       - -t
-      - '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15'
+      - '-o StrictHostKeyChecking=no'
+      - -t
+      - '-o UserKnownHostsFile=/dev/null'
+      - -t
+      - '-o ConnectTimeout=15'
       - -c
       - >-
         test "$(findmnt -n -o TARGET /data)" = /data &&

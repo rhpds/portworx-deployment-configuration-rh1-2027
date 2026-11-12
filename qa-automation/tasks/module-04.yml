@@ -58,7 +58,11 @@
       - -i
       - "{{ e2e_ssh_key }}"
       - -t
-      - '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=15'
+      - '-o StrictHostKeyChecking=no'
+      - -t
+      - '-o UserKnownHostsFile=/dev/null'
+      - -t
+      - '-o ConnectTimeout=15'
       - -c
       - 'test -s /etc/fstab && cat /etc/fstab'
   changed_when: false
