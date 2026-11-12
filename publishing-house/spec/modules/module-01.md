@@ -1,47 +1,41 @@
-# Module 01 — Overview of Kube Datastore
+# Module 01 — Install Portworx
 
 ### Brief Overview
 
-Kube Datastore (KDS) is Red Hat's lightweight, OCP-native block storage layer bundled with OpenShift Virtualization. This module positions KDS relative to Portworx Enterprise so participants can answer the first question any customer asks: "Which storage product do I need?" The module grounds the conversation in real market data before participants touch the Portworx installer — ensuring they understand the business context (the VMware migration wave) and the technical scope of what they are about to deploy.
+Students install Portworx Enterprise 3.7 on an existing OpenShift 4.22 cluster from scratch. They enable user workload monitoring, deploy the Portworx Operator from the OpenShift Software Catalog, create a StorageCluster CR via the CLI, verify the cluster with pxctl, and then deploy OpenShift Virtualization by creating the HyperConverged object. The module ends by reviewing the Portworx StorageClasses and StorageProfiles created for VM workloads.
 
 ### Audience and Time
 
-- **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; no prior Portworx knowledge required
-- **Estimated duration:** 10 minutes
-- **Prerequisites for this module:** Access to the Showroom terminal and OpenShift web console; cluster-admin credentials available
+- **Audience:** Red Hat Solutions Engineers, Architects, and field AEs; no prior Portworx knowledge required
+- **Estimated duration:** 15 minutes
+- **Prerequisites for this module:** Showroom terminal with cluster-admin oc access; OpenShift web console reachable
 
 ### Learning Objectives
 
-- Compare Kube Datastore and Portworx Enterprise on capacity, topology support, and enterprise feature set to identify the correct product for a given customer scenario
-- Articulate the vSAN replacement narrative using market data (45+ enterprises, 100,000+ VM volumes, 30-50% cost savings) to support a field conversation
-- Identify the key distinction between a KDS deployment and a standard Portworx Enterprise install before beginning the installation module
+- Enable OpenShift user workload monitoring so that Portworx can export metrics to the OpenShift monitoring stack
+- Install the Portworx Enterprise Operator from the OpenShift Software Catalog and create a StorageCluster CR from the CLI
+- Verify a healthy 3-node Portworx cluster using pxctl and the Portworx console plugin
+- Deploy OpenShift Virtualization by creating the HyperConverged CR and confirm that Portworx StorageClasses and StorageProfiles for VM workloads are available
 
 ### Lab Structure
 
 | Section | Title | Duration |
 |---------|-------|----------|
-| 1 | Market context: the VMware migration gap | 4 min |
-| 2 | What is Kube Datastore (KDS)? | 4 min |
-| 3 | KDS vs. Portworx Enterprise — decision matrix | 4 min |
-| 4 | Lab environment orientation | 3 min |
+| 1 | Project setup and cluster orientation | 2 min |
+| 2 | Enable user workload monitoring | 2 min |
+| 3 | Install Portworx Operator from Software Catalog | 4 min |
+| 4 | Create StorageCluster CR and verify with pxctl | 5 min |
+| 5 | Install HyperConverged and review StorageClasses | 2 min |
 
 ### Detailed Steps
 
-1. Read the opening scenario in Showroom: a VMware renewal landed on a customer's CFO's desk and the deal is stalling because nobody can answer what replaces vSAN.
-2. Review the market statistics panel: 86% of organizations shrinking VMware footprint; only 4% finished; 45+ enterprises running VMs on Kubernetes; 100,000+ VM volumes in production; 30-50% savings vs. prior virtualization spend.
-3. Navigate to the KDS product overview section. Read the definition: KDS is the Kubernetes-native block storage layer bundled with OpenShift Virtualization for lightweight VM storage scenarios.
-4. Review the KDS vs. Portworx Enterprise decision matrix. Note the differentiation on: cluster scale, enterprise data services (encryption, DR, auto-rebalance), heterogeneous back-end support, and telemetry depth.
-5. Identify the key installation distinction flagged in the matrix: a KDS deployment uses a simplified StorageCluster profile that omits the Portworx Enterprise feature set — students will deploy the full PXE profile in Module 2.
-6. Open the OpenShift web console in the browser tab pre-loaded in Showroom. Confirm cluster-admin access by viewing the node list (Compute > Nodes). Verify three worker nodes are visible and Ready.
-7. Open the Showroom terminal. Run `oc get nodes` and `oc get storagecluster -A` to confirm no StorageCluster exists yet — Portworx is not installed.
-
-### Key Takeaways
-
-- KDS is the right choice for lightweight OCP Virt VM storage; Portworx Enterprise is the right choice when customers need enterprise data services, heterogeneous back-ends, or scale beyond what KDS covers
-- The VMware migration wave is a real, quantified opportunity — field engineers can reference specific production numbers in customer conversations
-- The lab cluster has no Portworx installed at this point; Module 2 begins the installation from scratch
-
-### Infrastructure Notes
-
-- No hands-on Portworx steps in this module; cluster access is verified but not exercised
-- The `oc get storagecluster -A` command should return "No resources found" — this is expected and confirms the lab precondition
+1. Create the `vmtest` project with `oc new-project vmtest` and explore cluster nodes with `oc get nodes`.
+2. Create the `cluster-monitoring-config` ConfigMap in `openshift-monitoring` to enable user workload monitoring.
+3. Navigate to Ecosystem > Software Catalog in the OpenShift Console, search for Portworx Enterprise, install the operator into a new `portworx` project, and enable the Console plugin.
+4. Look up the Thanos Querier route, write the StorageCluster CR to `~/px-spec.yaml` using a here-doc, and apply it with `oc apply -f`.
+5. Watch `px-cluster` pods with `watch oc -n portworx get pods -l name=portworx` until all three show `1/1 Running`.
+6. Run `pxctl status --color` via the pxctl alias shortcut to confirm all 3 storage nodes are online.
+7. Apply the HyperConverged CR with `scratchSpaceStorageClass: px-cdi-scratch` and `vmStateStorageClass: px-rwx-file-kubevirt`.
+8. Inspect `oc get sc` and `oc get storageprofile px-rwx-block-kubevirt` to confirm Portworx VM StorageClasses are present.
+9. Confirm boot image PVCs in `openshift-virtualization-os-images` are Bound on `px-rwx-block-kubevirt`.
+10. Install `virtctl` from the cluster's ConsoleCLIDownload.

@@ -1,55 +1,40 @@
-# Module 05 — Failover Exercise
+# Module 05 — Autopilot
 
 ### Brief Overview
 
-This module is the proof-of-concept moment for the vSAN replacement story. Participants simulate a worker node failure with a VM actively running on Portworx RWX block storage, observe Portworx's automatic storage-level failover, and verify that the workload continues without manual intervention. The module also surfaces per-VM storage telemetry during and after the failure event — showing not just that the VM survived, but exactly what happened at the storage layer. This is the scenario most likely to appear in a customer proof-of-concept evaluation.
+Students configure Portworx Autopilot to automatically expand a VM's data disk when usage exceeds 30%. They create a second VM with a 5 GiB data disk, write an AutopilotRule, label the namespace and PVC, fill the disk past the threshold, and observe Autopilot expand the PVC to 10 GiB with no manual intervention. They then grow the guest partition and filesystem inside the VM to use the new space.
 
 ### Audience and Time
 
-- **Audience:** Red Hat Solutions Engineers, Architects, and Account Executives; Module 04 completion required (VM must be running on Portworx RWX storage)
+- **Audience:** Red Hat Solutions Engineers, Architects, and field AEs
 - **Estimated duration:** 20 minutes
-- **Prerequisites for this module:** VM from Module 04 must be in Running state; Portworx console plugin enabled
+- **Prerequisites for this module:** Module 04 complete; Autopilot pod running in `portworx` namespace; Thanos Querier URL correctly set in StorageCluster
 
 ### Learning Objectives
 
-- Simulate a storage node failure by cordoning and draining a worker node while a VM is running
-- Verify that Portworx performs a storage-level failover and the VM workload continues without data loss
-- Analyze per-VM storage telemetry before, during, and after the failover event using pxctl and the Portworx console plugin
+- Create an AutopilotRule that monitors Portworx PVC usage and doubles volume size when usage exceeds 30%, up to a 20 GiB maximum
+- Label a namespace and PVC to bring them into scope of an Autopilot rule
+- Observe Autopilot state transitions (Normal → Triggered → ActiveActionsInProgress → ActiveActionsTaken) in Kubernetes events
+- Grow the guest partition and filesystem inside a VM to consume the automatically expanded PVC
 
 ### Lab Structure
 
 | Section | Title | Duration |
 |---------|-------|----------|
-| 1 | Verify pre-failover baseline (VM running, telemetry normal) | 4 min |
-| 2 | Simulate node failure (cordon + drain) | 5 min |
-| 3 | Observe Portworx failover in progress | 5 min |
-| 4 | Verify workload continuity and restore node | 6 min |
+| 1 | Create the Autopilot VM with a 5 GiB data disk | 4 min |
+| 2 | Create the AutopilotRule and label namespace/PVC | 3 min |
+| 3 | Format and mount the data disk inside the VM | 3 min |
+| 4 | Fill the disk and watch Autopilot respond | 7 min |
+| 5 | Expand the guest partition and verify free space | 3 min |
 
 ### Detailed Steps
 
-1. In the Showroom terminal, confirm the VM from Module 04 is still Running: `oc get vm -n demo`.
-2. Identify which worker node the VM's volume is attached to: `pxctl volume inspect <volume-id>` — note the "Attached On" field.
-3. In the Portworx console plugin in the OCP web console, observe the current I/O telemetry for the VM volume (note IOPS and replica count = 2).
-4. In the Showroom terminal, cordon the node that holds the VM volume attachment: `oc adm cordon <node-name>`. This prevents new pods from scheduling but does not drain existing ones yet.
-5. Drain the node: `oc adm drain <node-name> --ignore-daemonsets --delete-emptydir-data`. This evicts running pods on the node.
-6. Watch the VM status: `oc get vm -n demo -w`. The VM may briefly transition through a migration phase as OpenShift Virtualization detects the node drain.
-7. In the Showroom terminal, watch Portworx respond to the lost node: `pxctl status` — observe that the affected node transitions to Offline state.
-8. Run `pxctl volume inspect <volume-id>` again. Observe that the "Attached On" field has changed to a healthy node and the replication status shows re-replication in progress.
-9. In the Portworx console plugin, observe the telemetry timeline showing the failover event: a brief I/O pause followed by resumption on the new node.
-10. Confirm the VM is still Running (or has restarted and is Running again): `oc get vm -n demo`.
-11. Test workload continuity by connecting to the VM console in the OCP web console (Virtualization > VirtualMachines > vm-demo > Console tab). Verify the OS is responsive.
-12. Restore the node: `oc adm uncordon <node-name>`. Run `pxctl status` and confirm the node returns to Online state and replication rebuilds to the target replica count.
-
-### Key Takeaways
-
-- Portworx performs automatic storage-level failover when a node goes offline — no manual operator intervention is required
-- The replication factor set during StorageClass creation (Module 03) determines how many node failures can be tolerated without data loss
-- Per-VM telemetry shows the exact moment of failover — customers can use this for SLA audit and incident reporting
-- The failed node returns to full replication state automatically after uncordoning — no manual data repair steps needed
-
-### Infrastructure Notes
-
-- The cordon + drain pattern is the standard simulation for a node failure in a lab environment; it avoids actually losing the VM (destructive options like `poweroff` the hypervisor are not available in the CNV lab environment)
-- Draining may trigger OpenShift Virtualization LiveMigration if the VM is migratable — this is expected and reinforces the RWX storage story
-- Re-replication after node uncordon can take several minutes depending on volume size; the module wraps before full rebuild completes
-- If the VM fails to restart automatically, `oc start vm vm-demo -n demo` restarts it manually
+1. Apply a VirtualMachine manifest for `centos-stream9-autopilot` with two DataVolumeTemplates: a 30 GiB boot disk and a 5 GiB blank data disk (`centos-stream9-autopilot-data-disk`) on `px-rwx-block-kubevirt`.
+2. Apply the `volume-resize` AutopilotRule: selector `expand=true`, condition `px_volume_usage_bytes/px_volume_capacity_bytes > 30%` for 5 minutes, action resize by 100%, maxsize 20 GiB.
+3. Label namespace `vmtest` and PVC `centos-stream9-autopilot-data-disk` with `expand=true`.
+4. SSH into the VM and format `/dev/vdb` with fdisk + mkfs.ext4, then mount at `/data`.
+5. Run `sudo shred -n 1 -s 4G /data/file` to fill the disk past the 30% threshold.
+6. Watch `oc get events --field-selector involvedObject.kind=AutopilotRule` until `ActiveActionsTaken` appears.
+7. Confirm `oc get pvc -n vmtest` shows the data disk expanded to 10 GiB.
+8. Run `parted` and `resize2fs` inside the VM to grow the partition and filesystem to fill the new capacity.
+9. Check `df -h` inside the VM to confirm `/data` shows the expanded size.

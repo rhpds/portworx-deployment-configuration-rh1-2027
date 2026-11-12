@@ -24,11 +24,11 @@ Participants install Portworx Enterprise from scratch on a dedicated OCP cluster
 
 ## Learning Objectives
 
-1. Install Portworx Enterprise on OpenShift by generating a spec in Portworx Central, deploying the Portworx Operator from the OpenShift Software Catalog, and creating a StorageCluster custom resource
-2. Configure dynamic storage pools and OpenShift StorageClasses backed by Portworx distributed volumes, verifying pool health with pxctl
-3. Deploy VM workloads on RWX block storage, enable the Portworx console plugin, and observe enterprise data services as a native tab in the OpenShift console
-4. Execute a storage-level failover, verify workload continuity after a simulated node failure, and analyze per-VM storage telemetry
-5. Perform a manual pool relocate operation and verify data integrity across storage tiers
+1. Install Portworx Enterprise on OpenShift by deploying the Portworx Operator from the Software Catalog, creating a StorageCluster CR from the CLI, and verifying a healthy 3-node cluster with pxctl
+2. Deploy OpenShift Virtualization and provision virtual machines backed by Portworx RWX block storage using the oc CLI and the OpenShift Console
+3. Perform live VM migration between compute nodes and validate high availability after a simulated node failure, observing STORK-guided recovery and data persistence
+4. Protect and restore virtual machines using Portworx-backed snapshots via the OpenShift Virtualization Console
+5. Configure Portworx Autopilot to automatically expand VM storage capacity and dynamically scale I/O performance limits as volumes grow
 
 ## Content Type
 
