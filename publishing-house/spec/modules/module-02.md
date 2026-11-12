@@ -33,3 +33,9 @@ Students provision a CentOS Stream 9 virtual machine on OpenShift Virtualization
 3. Watch `oc get vms,dv -n vmtest` until the VM reaches Running status.
 4. SSH using `virtctl ssh cloud-user@vm/centos-stream9-example -n vmtest -i ~/.ssh/id_rsa`.
 5. Navigate to Virtualization > VirtualMachines in the console, create a new VM, choose centos.stream9, and explore its Overview, Snapshots, and YAML tabs.
+
+### Key Takeaways
+
+- VMs backed by Portworx RWX block PVCs survive node failures and live migrations without data loss
+- SSH access via virtctl proxies through the OCP API — no direct network route to the VM required
+- The Portworx console plugin surfaces per-VM storage telemetry as a native OCP console tab

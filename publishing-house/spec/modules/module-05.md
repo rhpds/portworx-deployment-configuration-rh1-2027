@@ -38,3 +38,9 @@ Students configure Portworx Autopilot to automatically expand a VM's data disk w
 7. Confirm `oc get pvc -n vmtest` shows the data disk expanded to 10 GiB.
 8. Run `parted` and `resize2fs` inside the VM to grow the partition and filesystem to fill the new capacity.
 9. Check `df -h` inside the VM to confirm `/data` shows the expanded size.
+
+### Key Takeaways
+
+- Autopilot monitors Prometheus metrics and expands PVCs automatically when usage exceeds a configured threshold — no manual intervention required
+- The AutopilotRule CRD uses label selectors on both the namespace and the PVC; only labelled resources are managed
+- After Autopilot expands the PVC, the guest filesystem must be grown manually with parted and resize2fs — Portworx resizes the block device but does not modify the partition table

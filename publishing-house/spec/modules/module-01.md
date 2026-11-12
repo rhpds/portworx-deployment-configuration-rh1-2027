@@ -39,3 +39,9 @@ Students install Portworx Enterprise 3.7 on an existing OpenShift 4.22 cluster f
 8. Inspect `oc get sc` and `oc get storageprofile px-rwx-block-kubevirt` to confirm Portworx VM StorageClasses are present.
 9. Confirm boot image PVCs in `openshift-virtualization-os-images` are Bound on `px-rwx-block-kubevirt`.
 10. Install `virtctl` from the cluster's ConsoleCLIDownload.
+
+### Key Takeaways
+
+- Portworx installs via a standard OCP Operator + StorageCluster CR; no manual disk formatting required — cloud drives provision dynamically from EBS
+- pxctl is the authoritative health check; three online storage nodes with green status means the distributed storage layer is ready
+- Portworx StorageClasses and StorageProfiles for VM workloads are created automatically and appear in the OCP console immediately after cluster formation

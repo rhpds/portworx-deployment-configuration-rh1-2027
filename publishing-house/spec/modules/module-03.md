@@ -36,3 +36,9 @@ Students write a persistence marker to a running VM, perform a live compute migr
 5. Watch `oc get pods,vms -o wide -n vmtest` until a new virt-launcher pod starts on a surviving node.
 6. Retry SSH in a loop until the VM boots, then `cat ~/text` to confirm data survived the HA restart.
 7. Wait for the rebooted node to rejoin and all three Portworx nodes to come online using the pxctl alias.
+
+### Key Takeaways
+
+- STORK schedules VM restarts on nodes that already hold a local replica, minimising storage I/O across the network during failover
+- Live migration completes non-disruptively; the guest marker file persists because data lives in the PVC, not the virt-launcher pod
+- After a node reboot, Portworx automatically reintegrates the node and rebalances replicas with no manual intervention

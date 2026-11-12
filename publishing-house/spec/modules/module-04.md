@@ -34,3 +34,9 @@ Students take a Portworx-backed snapshot of a running VM, simulate accidental da
 4. On the Snapshots tab, open the kebab menu for the snapshot and select Restore VirtualMachine from snapshot; confirm the restore.
 5. Start the VM again via Actions > Start and wait for it to reach Running status.
 6. SSH into the VM and run `cat /etc/fstab` to confirm the file has been restored.
+
+### Key Takeaways
+
+- Portworx snapshots are storage-consistent, crash-consistent point-in-time copies that do not require the VM to be powered off
+- Restore creates a new PVC from the snapshot; the VM is then restarted against the restored disk — fstab content confirms filesystem integrity
+- Snapshot and restore operations are native to OCP Virtualization; no additional tooling or agents inside the guest are required
