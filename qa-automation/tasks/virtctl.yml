@@ -1,0 +1,38 @@
+---
+# Download the client matching this cluster into a private, unprivileged directory.
+- name: Find OpenShift Virtualization client download
+  kubernetes.core.k8s_info:
+    api_version: console.openshift.io/v1
+    kind: ConsoleCLIDownload
+    name: virtctl-clidownloads-kubevirt-hyperconverged
+  register: e2e_virtctl_download
+
+- name: Select Linux x86_64 virtctl download
+  ansible.builtin.set_fact:
+    e2e_virtctl_urls: >-
+      {{ e2e_virtctl_download.resources | map(attribute='spec.links') | flatten
+         | selectattr('text', 'equalto', 'Download virtctl for Linux for x86_64')
+         | map(attribute='href') | list }}
+
+- name: Require a unique cluster-provided virtctl download
+  ansible.builtin.assert:
+    that:
+      - e2e_virtctl_urls | length == 1
+    fail_msg: OpenShift Virtualization must provide one Linux x86_64 virtctl download.
+
+- name: Create private temporary directory for virtctl
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: lb8002-virtctl-
+  register: e2e_virtctl_dir
+
+- name: Download and extract cluster-matched virtctl
+  ansible.builtin.unarchive:
+    src: "{{ e2e_virtctl_urls[0] }}"
+    dest: "{{ e2e_virtctl_dir.path }}"
+    remote_src: true
+    mode: 'u+rx'
+
+- name: Set virtctl executable path
+  ansible.builtin.set_fact:
+    e2e_virtctl: "{{ e2e_virtctl_dir.path }}/virtctl"

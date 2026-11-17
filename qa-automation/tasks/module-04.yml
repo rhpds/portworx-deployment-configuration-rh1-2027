@@ -50,7 +50,7 @@
 - name: Module 04 - Verify restored guest fstab exists and is nonempty
   ansible.builtin.command:
     argv:
-      - virtctl
+      - "{{ e2e_virtctl }}"
       - ssh
       - "cloud-user@vm/{{ e2e_vm }}"
       - -n

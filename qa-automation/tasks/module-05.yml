@@ -70,7 +70,7 @@
 - name: Module 05 - Verify guest filesystem grew beyond original 5Gi disk
   ansible.builtin.command:
     argv:
-      - virtctl
+      - "{{ e2e_virtctl }}"
       - ssh
       - "cloud-user@vm/{{ e2e_autopilot_vm }}"
       - -n

@@ -56,7 +56,7 @@
 - name: Module 02 - Verify guest SSH works
   ansible.builtin.command:
     argv:
-      - virtctl
+      - "{{ e2e_virtctl }}"
       - ssh
       - "cloud-user@vm/{{ e2e_vm }}"
       - -n

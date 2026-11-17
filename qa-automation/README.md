@@ -62,8 +62,11 @@ It writes a tiny marker, not a multi-GiB fio dataset.
 ## Run
 
 Run from an execution environment / bastion with `ansible-core`,
-`kubernetes.core`, its Kubernetes client dependencies, `oc`, `virtctl`, cluster
-admin access, and the private key authorized by the solver VM.
+`kubernetes.core`, its Kubernetes client dependencies, `oc`, cluster admin access,
+and the private key authorized by the solver VM. For guest validation the
+playbook downloads the Linux x86_64 `virtctl` matching the cluster into a private
+temporary directory. The runner must be able to reach the cluster client download
+URL and extract a gzip tar archive; no system-wide installation is required.
 
 ```sh
 export KUBECONFIG=/path/to/lab.kubeconfig

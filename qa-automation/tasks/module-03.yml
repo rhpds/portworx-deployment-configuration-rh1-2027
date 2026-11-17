@@ -32,7 +32,7 @@
 - name: Module 03 - Verify persistent guest data
   ansible.builtin.command:
     argv:
-      - virtctl
+      - "{{ e2e_virtctl }}"
       - ssh
       - "cloud-user@vm/{{ e2e_vm }}"
       - -n

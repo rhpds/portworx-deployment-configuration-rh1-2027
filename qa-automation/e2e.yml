@@ -19,6 +19,14 @@
     e2e_delay: 10
     e2e_autopilot_settle_seconds: 60
     e2e_module06_enabled: true
+  pre_tasks:
+    - name: Prepare cluster-matched virtctl for guest validation
+      ansible.builtin.import_tasks: tasks/virtctl.yml
+      tags: [always]
+      when: >-
+        'all' in ansible_run_tags or
+        (ansible_run_tags | intersect(['module02', 'module03', 'module04', 'module05']) | length > 0)
+
   tasks:
     - name: Validate module 01 - Installation and storage integration
       ansible.builtin.import_tasks: tasks/module-01.yml
