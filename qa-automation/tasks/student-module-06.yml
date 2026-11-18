@@ -84,8 +84,6 @@
     - name: Module 06 - Start the real fio Deployment with the student 6Gi dataset
       kubernetes.core.k8s:
         state: present
-        wait: true
-        wait_timeout: 900
         definition: "{{ lookup('template', '../templates/fio-deployment.yml.j2') | from_yaml }}"
 
     - name: Module 06 - Find the running fio pod
@@ -97,7 +95,11 @@
       register: e2e_fio_pods
       retries: "{{ e2e_retries }}"
       delay: "{{ e2e_delay }}"
-      until: e2e_fio_pods.resources | length == 1
+      until:
+        - e2e_fio_pods.resources | length == 1
+        - >-
+          e2e_fio_pods.resources[0].status.conditions | default([])
+          | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length == 1
 
     - name: Module 06 - Save original pod identity and restart count
       ansible.builtin.set_fact:
@@ -135,9 +137,12 @@
       register: e2e_student_io_optout
       failed_when: e2e_student_io_optout.rc != 0
 
-    - name: Module 06 - Wait for an Autopilot reconciliation interval
-      ansible.builtin.pause:
-        seconds: "{{ e2e_autopilot_settle_seconds }}"
+    - name: Module 06 - Wait for reconciliation with streamed progress
+      ansible.builtin.command:
+        argv: [sleep, "{{ e2e_autopilot_settle_seconds }}"]
+      changed_when: false
+      async: "{{ e2e_autopilot_settle_seconds | int + 30 }}"
+      poll: 5
 
     - name: Module 06 - Inspect volume after opt-out
       kubernetes.core.k8s_exec:
@@ -183,11 +188,23 @@
         state: absent
         kind: Namespace
         name: "{{ e2e_io_namespace }}"
-        wait: true
-        wait_timeout: 120
+        wait: false
       when: e2e_student_io_namespace_owned | bool
       register: e2e_student_io_namespace_cleanup
       ignore_errors: true  # Attempt StorageClass cleanup before reporting failure.
+
+    - name: Module 06 - Poll workload namespace cleanup with streamed progress
+      kubernetes.core.k8s_info:
+        kind: Namespace
+        name: "{{ e2e_io_namespace }}"
+      register: e2e_student_io_namespace_wait
+      when:
+        - e2e_student_io_namespace_owned | bool
+        - not (e2e_student_io_namespace_cleanup is failed)
+      retries: "{{ e2e_retries }}"
+      delay: "{{ e2e_delay }}"
+      until: e2e_student_io_namespace_wait.resources | length == 0
+      ignore_errors: true
 
     - name: Module 06 - Remove only the E2E-owned StorageClass
       kubernetes.core.k8s:
@@ -203,5 +220,6 @@
       ansible.builtin.assert:
         that:
           - not (e2e_student_io_namespace_cleanup is failed)
+          - not (e2e_student_io_namespace_wait is failed)
           - not (e2e_student_io_class_cleanup is failed)
         fail_msg: Inspect E2E-owned appio namespace, px-dynamic-io StorageClass and their PVs for leftovers.

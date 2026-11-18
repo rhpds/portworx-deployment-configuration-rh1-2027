@@ -40,13 +40,14 @@
     kind: HyperConverged
     namespace: openshift-cnv
     name: kubevirt-hyperconverged
-    wait: true
-    wait_condition:
-      type: Available
-      status: 'True'
-    wait_timeout: 900
   register: e2e_hco
-  failed_when: e2e_hco.resources | length != 1
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_hco.resources | length == 1
+    - >-
+      e2e_hco.resources[0].status.conditions | default([]) | selectattr('type', 'equalto', 'Available')
+      | selectattr('status', 'equalto', 'True') | list | length == 1
 
 - name: Module 01 - Verify Portworx storage classes
   kubernetes.core.k8s_info:
