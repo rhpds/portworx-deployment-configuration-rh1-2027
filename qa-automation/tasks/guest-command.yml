@@ -1,0 +1,26 @@
+---
+- name: Run bounded command through guest SSH
+  ansible.builtin.command:
+    argv:
+      - "{{ e2e_virtctl }}"
+      - ssh
+      - "cloud-user@vm/{{ e2e_guest_name | default(e2e_vm) }}"
+      - -n
+      - "{{ e2e_namespace }}"
+      - -i
+      - "{{ e2e_ssh_key }}"
+      - -t
+      - '-o StrictHostKeyChecking=no'
+      - -t
+      - '-o UserKnownHostsFile=/dev/null'
+      - -t
+      - '-o ConnectTimeout=15'
+      - -c
+      - "{{ e2e_guest_command }}"
+  register: e2e_guest_result
+  changed_when: e2e_guest_changes | default(false) | bool
+  retries: "{{ e2e_guest_retries | default(e2e_retries) }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_guest_result.rc == 0
+  async: "{{ e2e_guest_timeout | default(60) }}"
+  poll: 5

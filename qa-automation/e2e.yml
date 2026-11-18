@@ -1,54 +1,59 @@
 ---
-# Post-solve validation, not fresh-environment readiness or a student walkthrough.
-# Run healthcheck.yml separately before solving. See README.md.
-- name: Validate LB8002 module outcomes
+# Full student workflow. Keep this filename: the Showroom runner invokes e2e.yml.
+- name: Check full-workflow safety before changing the disposable cluster
   hosts: localhost
   connection: local
   gather_facts: false
-  module_defaults:
-    group/kubernetes.core.k8s:
-      kubeconfig: "{{ k8s_kubeconfig | default(lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true)) }}"
-  environment:
-    KUBECONFIG: "{{ k8s_kubeconfig | default(lookup('env', 'K8S_AUTH_KUBECONFIG') | default(lookup('env', 'KUBECONFIG'), true)) }}"
-  vars:
-    e2e_namespace: vmtest
-    e2e_vm: centos-stream9-example
-    e2e_autopilot_vm: centos-stream9-autopilot
-    e2e_ssh_key: "{{ lookup('env', 'HOME') }}/.ssh/id_rsa"
-    e2e_retries: 90
-    e2e_delay: 10
-    e2e_autopilot_settle_seconds: 60
-    e2e_module06_enabled: true
-  pre_tasks:
-    - name: Prepare cluster-matched virtctl for guest validation
-      ansible.builtin.import_tasks: tasks/virtctl.yml
-      tags: [always]
-      when: >-
-        'all' in ansible_run_tags or
-        (ansible_run_tags | intersect(['module02', 'module03', 'module04', 'module05']) | length > 0)
-
+  vars_files:
+    - vars.yml
+  tags: [always]
   tasks:
-    - name: Validate module 01 - Installation and storage integration
-      ansible.builtin.import_tasks: tasks/module-01.yml
-      tags: [module01]
+    - name: Require explicit consent for worker reboot and destructive guest restore
+      ansible.builtin.assert:
+        that: e2e_allow_disruptive | bool
+        fail_msg: >-
+          Full E2E completes the student exercises, including a worker reboot and
+          deleting/restoring guest /etc/fstab. On a disposable QA cluster only,
+          pass -e e2e_allow_disruptive=true. No destructive exercise is silently skipped.
+      when: >-
+        ('all' in ansible_run_tags and
+         (['module03', 'module04'] | difference(ansible_skip_tags) | length > 0)) or
+        (ansible_run_tags | intersect(['module03', 'module04']) | difference(ansible_skip_tags) | length > 0)
 
-    - name: Validate module 02 - Running VM and RWX block storage
-      ansible.builtin.import_tasks: tasks/module-02.yml
-      tags: [module02]
+    - name: Create the result directory for this invocation
+      ansible.builtin.file:
+        path: "{{ e2e_artifacts_dir }}"
+        state: directory
+        mode: '0700'
 
-    - name: Validate module 03 - Migration and data persistence
-      ansible.builtin.import_tasks: tasks/module-03.yml
-      tags: [module03]
+    - name: Find previous result files so a failed rerun cannot show stale passes
+      ansible.builtin.find:
+        paths: "{{ e2e_artifacts_dir }}"
+        patterns: ['module-*.json', 'fio-*.json']
+      register: e2e_previous_results
 
-    - name: Validate module 04 - Snapshot and restore outcomes
-      ansible.builtin.import_tasks: tasks/module-04.yml
-      tags: [module04]
+    - name: Clear only previous E2E result JSON
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: absent
+      loop: "{{ e2e_previous_results.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
 
-    - name: Validate module 05 - Autopilot volume expansion
-      ansible.builtin.import_tasks: tasks/module-05.yml
-      tags: [module05]
+- name: Complete module 01 - Install Portworx and Virtualization
+  ansible.builtin.import_playbook: modules/module-01.yml
 
-    - name: Validate module 06 - Dynamic I/O control smoke test
-      ansible.builtin.import_tasks: tasks/module-06.yml
-      when: e2e_module06_enabled | bool
-      tags: [module06]
+- name: Complete module 02 - Create virtual machines
+  ansible.builtin.import_playbook: modules/module-02.yml
+
+- name: Complete module 03 - Live migration and high availability
+  ansible.builtin.import_playbook: modules/module-03.yml
+
+- name: Complete module 04 - Snapshot and restore
+  ansible.builtin.import_playbook: modules/module-04.yml
+
+- name: Complete module 05 - Autopilot capacity expansion
+  ansible.builtin.import_playbook: modules/module-05.yml
+
+- name: Complete module 06 - Dynamic application I/O
+  ansible.builtin.import_playbook: modules/module-06.yml

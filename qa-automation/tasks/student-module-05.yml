@@ -1,0 +1,149 @@
+---
+# Student source: content/modules/ROOT/pages/module-05.adoc.
+- name: Module 05 - Check exercise namespace ownership
+  ansible.builtin.include_tasks: owned-namespace.yml
+  vars:
+    e2e_owned_namespace: "{{ e2e_namespace }}"
+
+- name: Module 05 - Prepare virtctl for standalone execution
+  ansible.builtin.import_tasks: virtctl.yml
+  when: e2e_virtctl is not defined
+
+- name: Module 05 - Create Autopilot VM with a blank 5Gi data disk
+  ansible.builtin.include_tasks: create-student-vm.yml
+  vars:
+    e2e_guest_vm: "{{ e2e_autopilot_vm }}"
+    e2e_guest_data_disk: true
+
+- name: Module 05 - Create the student volume resize rule
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: autopilot.libopenstorage.org/v1alpha1
+      kind: AutopilotRule
+      metadata:
+        name: volume-resize
+      spec:
+        selector:
+          matchLabels:
+            expand: 'true'
+        namespaceSelector:
+          matchLabels:
+            expand: 'true'
+        conditions:
+          expressions:
+            - key: '100 * (px_volume_usage_bytes / px_volume_capacity_bytes)'
+              operator: Gt
+              values: ['30']
+          for: 5
+        actions:
+          - name: openstorage.io.action.volume/resize
+            params:
+              scalepercentage: '100'
+              maxsize: 20Gi
+
+- name: Module 05 - Label the student namespace for Autopilot
+  kubernetes.core.k8s:
+    state: patched
+    kind: Namespace
+    name: "{{ e2e_namespace }}"
+    definition:
+      metadata:
+        labels:
+          expand: 'true'
+
+- name: Module 05 - Label the VM data PVC for Autopilot
+  kubernetes.core.k8s:
+    state: patched
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_autopilot_pvc_name }}"
+    definition:
+      metadata:
+        labels:
+          expand: 'true'
+
+- name: Module 05 - Require an unexpanded 5Gi disk for a genuine resize exercise
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_autopilot_pvc_name }}"
+  register: e2e_before_autopilot_pvc
+  failed_when: e2e_before_autopilot_pvc.resources[0].status.capacity.storage != '5Gi'
+
+- name: Module 05 - Partition format and mount the student data disk
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_name: "{{ e2e_autopilot_vm }}"
+    e2e_guest_changes: true
+    e2e_guest_command: >-
+      set -e;
+      if ! test -b /dev/vdb1; then
+        (echo g; echo n; echo 1; echo; echo; echo w) | sudo fdisk /dev/vdb;
+      fi;
+      fs=$(sudo blkid -o value -s TYPE /dev/vdb1 || true);
+      if test -z "$fs"; then sudo mkfs.ext4 /dev/vdb1; else test "$fs" = ext4; fi;
+      sudo mkdir -p /data;
+      mountpoint -q /data || sudo mount /dev/vdb1 /data;
+      test "$(findmnt -n -o SOURCE /data)" = /dev/vdb1
+
+- name: Module 05 - Capture existing Autopilot events before writing data
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Event
+    field_selectors:
+      - involvedObject.kind=AutopilotRule
+      - involvedObject.name=volume-resize
+  register: e2e_before_autopilot_events
+
+- name: Module 05 - Write 4Gi of real data to cross the usage threshold
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_name: "{{ e2e_autopilot_vm }}"
+    e2e_guest_changes: true
+    e2e_guest_timeout: 900
+    e2e_guest_retries: 0
+    e2e_guest_command: sudo touch /data/file && sudo shred -n 1 -s 4G /data/file && sync
+
+- name: Module 05 - Wait for Autopilot to expand the PVC without manually patching capacity
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_autopilot_pvc_name }}"
+  register: e2e_grown_autopilot_pvc
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_grown_autopilot_pvc.resources[0].status.capacity.storage | default('') in ['10Gi', '20Gi']
+
+- name: Module 05 - Wait for a new completed Autopilot action event
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Event
+    field_selectors:
+      - involvedObject.kind=AutopilotRule
+      - involvedObject.name=volume-resize
+  register: e2e_new_autopilot_events
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: >-
+    (e2e_new_autopilot_events.resources
+     | rejectattr('metadata.resourceVersion', 'in',
+         e2e_before_autopilot_events.resources | map(attribute='metadata.resourceVersion') | list)
+     | selectattr('reason', 'defined') | selectattr('reason', 'search', 'ActiveActionsTaken') | list | length > 0) or
+    (e2e_new_autopilot_events.resources
+     | rejectattr('metadata.resourceVersion', 'in',
+         e2e_before_autopilot_events.resources | map(attribute='metadata.resourceVersion') | list)
+     | selectattr('message', 'defined') | selectattr('message', 'search', 'ActiveActionsTaken') | list | length > 0)
+
+- name: Module 05 - Expand the guest partition and filesystem
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_name: "{{ e2e_autopilot_vm }}"
+    e2e_guest_changes: true
+    e2e_guest_command: >-
+      sudo parted --script --fix /dev/vdb print &&
+      (yes | sudo parted ---pretend-input-tty /dev/vdb resizepart 1 100%) &&
+      sudo resize2fs /dev/vdb1 && df -h /data
+
+- name: Module 05 - Validate expanded volume and guest filesystem
+  ansible.builtin.import_tasks: module-05.yml

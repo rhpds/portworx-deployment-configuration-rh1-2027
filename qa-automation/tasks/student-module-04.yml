@@ -1,0 +1,132 @@
+---
+# Student source: content/modules/ROOT/pages/module-04.adoc.
+- name: Module 04 - Require permission for destructive snapshot exercise
+  ansible.builtin.assert:
+    that: e2e_allow_disruptive | bool
+    fail_msg: Module 04 deletes guest /etc/fstab and restores a snapshot. Use -e e2e_allow_disruptive=true on QA only.
+
+- name: Module 04 - Check exercise namespace ownership
+  ansible.builtin.include_tasks: owned-namespace.yml
+  vars:
+    e2e_owned_namespace: "{{ e2e_namespace }}"
+
+- name: Module 04 - Prepare virtctl for standalone execution
+  ansible.builtin.import_tasks: virtctl.yml
+  when: e2e_virtctl is not defined
+
+- name: Module 04 - Capture original fstab checksum
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_command: test -s /etc/fstab && sha256sum /etc/fstab
+
+- name: Module 04 - Save expected restored checksum
+  ansible.builtin.set_fact:
+    e2e_original_fstab_checksum: "{{ e2e_guest_result.stdout | trim }}"
+
+- name: Module 04 - Take a new student VM snapshot
+  kubernetes.core.k8s:
+    state: present
+    generate_name: lb8002-snapshot-
+    definition:
+      apiVersion: snapshot.kubevirt.io/v1beta1
+      kind: VirtualMachineSnapshot
+      metadata:
+        namespace: "{{ e2e_namespace }}"
+      spec:
+        source:
+          apiGroup: kubevirt.io
+          kind: VirtualMachine
+          name: "{{ e2e_vm }}"
+  register: e2e_new_snapshot
+
+- name: Module 04 - Wait for this snapshot to become usable
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineSnapshot
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_new_snapshot.result.metadata.name }}"
+  register: e2e_current_snapshot
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_current_snapshot.resources[0].status.readyToUse | default(false) | bool
+
+- name: Module 04 - Delete fstab and prove that it is missing
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_command: sudo rm -f /etc/fstab && test ! -e /etc/fstab
+    e2e_guest_changes: true
+
+- name: Module 04 - Stop the VM for restore
+  kubernetes.core.k8s:
+    state: patched
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_vm }}"
+    definition:
+      spec:
+        runStrategy: Halted
+
+- name: Module 04 - Wait for the running instance to stop
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_vm }}"
+  register: e2e_stopped_vmi
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_stopped_vmi.resources | length == 0
+
+- name: Module 04 - Restore the newly created snapshot
+  kubernetes.core.k8s:
+    state: present
+    generate_name: lb8002-restore-
+    definition:
+      apiVersion: snapshot.kubevirt.io/v1beta1
+      kind: VirtualMachineRestore
+      metadata:
+        namespace: "{{ e2e_namespace }}"
+      spec:
+        target:
+          apiGroup: kubevirt.io
+          kind: VirtualMachine
+          name: "{{ e2e_vm }}"
+        virtualMachineSnapshotName: "{{ e2e_new_snapshot.result.metadata.name }}"
+  register: e2e_new_restore
+
+- name: Module 04 - Wait for this restore to complete
+  kubernetes.core.k8s_info:
+    api_version: snapshot.kubevirt.io/v1beta1
+    kind: VirtualMachineRestore
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_new_restore.result.metadata.name }}"
+  register: e2e_current_restore
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_current_restore.resources[0].status.complete | default(false) | bool
+
+- name: Module 04 - Start the restored VM and wait for Ready
+  kubernetes.core.k8s:
+    state: patched
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_vm }}"
+    wait: true
+    wait_condition:
+      type: Ready
+      status: 'True'
+    wait_timeout: 900
+    definition:
+      spec:
+        runStrategy: Always
+
+- name: Module 04 - Verify restored fstab exactly matches its original contents
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_command: >-
+      test "$(sha256sum /etc/fstab)" = {{ e2e_original_fstab_checksum | quote }}
+
+- name: Module 04 - Validate snapshot and restore evidence
+  ansible.builtin.import_tasks: module-04.yml

@@ -1,0 +1,4 @@
+---
+- name: Fixture exercise completes
+  ansible.builtin.assert:
+    that: true

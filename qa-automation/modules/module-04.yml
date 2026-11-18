@@ -1,0 +1,20 @@
+---
+- name: Module 04 - Snapshot and restore
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [module04]
+  vars_files:
+    - ../vars.yml
+  vars:
+    e2e_module_id: module-04
+    e2e_module_file: student-module-04.yml
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ e2e_kubeconfig }}"
+  environment:
+    KUBECONFIG: "{{ e2e_kubeconfig }}"
+  tasks:
+    - name: Run module 04 and record its result
+      ansible.builtin.import_tasks: ../tasks/run-module.yml
+      tags: [module04]

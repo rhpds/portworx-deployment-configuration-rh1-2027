@@ -1,0 +1,20 @@
+---
+- name: Module 01 - Install Portworx and Virtualization
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [module01]
+  vars_files:
+    - ../vars.yml
+  vars:
+    e2e_module_id: module-01
+    e2e_module_file: student-module-01.yml
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ e2e_kubeconfig }}"
+  environment:
+    KUBECONFIG: "{{ e2e_kubeconfig }}"
+  tasks:
+    - name: Run module 01 and record its result
+      ansible.builtin.import_tasks: ../tasks/run-module.yml
+      tags: [module01]

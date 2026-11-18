@@ -1,0 +1,47 @@
+---
+- name: Module 06 - Expand the student PVC online
+  kubernetes.core.k8s:
+    state: patched
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_io_namespace }}"
+    name: fio-data
+    definition:
+      spec:
+        resources:
+          requests:
+            storage: "{{ e2e_io_step.size }}"
+
+- name: Module 06 - Wait for the requested capacity
+  kubernetes.core.k8s_info:
+    kind: PersistentVolumeClaim
+    namespace: "{{ e2e_io_namespace }}"
+    name: fio-data
+  register: e2e_student_io_pvc
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_student_io_pvc.resources | length == 1
+    - e2e_student_io_pvc.resources[0].status.phase | default('') == 'Bound'
+    - e2e_student_io_pvc.resources[0].status.capacity.storage | default('') == e2e_io_step.size
+
+- name: Module 06 - Wait for expected read and write limits
+  kubernetes.core.k8s_exec:
+    namespace: portworx
+    pod: "{{ e2e_px_pod }}"
+    container: portworx
+    command: "/opt/pwx/bin/pxctl volume inspect {{ e2e_student_io_pvc.resources[0].spec.volumeName }}"
+  register: e2e_student_io_inspect
+  changed_when: false
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_student_io_inspect.rc == 0
+    - >-
+      e2e_student_io_inspect.stdout is search('(?im)^\s*Max\s*Read\s*IOPS\s*:\s*' ~ e2e_io_step.iops ~ '\s*$')
+    - >-
+      e2e_student_io_inspect.stdout is search('(?im)^\s*Max\s*Write\s*IOPS\s*:\s*' ~ e2e_io_step.iops ~ '\s*$')
+
+- name: Module 06 - Measure actual workload IOPS at this capacity
+  ansible.builtin.include_tasks: fio-sample.yml
+  vars:
+    e2e_io_stage: "{{ e2e_io_step.size }}"

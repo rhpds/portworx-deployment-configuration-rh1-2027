@@ -1,0 +1,4 @@
+---
+# Alternate extension; Showroom uses e2e.yml as its entry point.
+- name: Run the LB8002 student workflow
+  ansible.builtin.import_playbook: e2e.yml

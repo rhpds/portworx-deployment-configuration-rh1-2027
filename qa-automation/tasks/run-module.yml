@@ -1,0 +1,41 @@
+---
+- name: Create private work and module result directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0700'
+  loop: ["{{ e2e_work_dir }}", "{{ e2e_artifacts_dir }}"]
+
+- name: Start module result
+  ansible.builtin.set_fact:
+    e2e_module_started: "{{ now(utc=true, fmt='%s') }}"
+    e2e_module_status: running
+    e2e_module_failed_task: ''
+
+- name: Execute student exercise and validation
+  block:
+    - name: Run module implementation
+      ansible.builtin.include_tasks: "{{ e2e_module_file }}"
+    - name: Mark module passed
+      ansible.builtin.set_fact:
+        e2e_module_status: passed
+  rescue:
+    - name: Record failed module
+      ansible.builtin.set_fact:
+        e2e_module_status: failed
+        e2e_module_failed_task: "{{ ansible_failed_task.name }}"
+  always:
+    - name: Write module timing and outcome
+      ansible.builtin.copy:
+        dest: "{{ e2e_artifacts_dir }}/{{ e2e_module_id }}.json"
+        mode: '0600'
+        content: >-
+          {{ {'module': e2e_module_id, 'status': e2e_module_status,
+              'started_epoch': e2e_module_started | int,
+              'duration_seconds': (now(utc=true, fmt='%s') | int) - (e2e_module_started | int),
+              'failed_task': e2e_module_failed_task} | to_nice_json }}
+
+- name: Stop workflow on module failure
+  ansible.builtin.fail:
+    msg: "{{ e2e_module_id }} failed at {{ e2e_module_failed_task }}; see the task error above."
+  when: e2e_module_status != 'passed'

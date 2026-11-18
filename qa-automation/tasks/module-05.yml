@@ -34,7 +34,7 @@
   kubernetes.core.k8s_info:
     kind: PersistentVolumeClaim
     namespace: "{{ e2e_namespace }}"
-    name: centos-stream9-autopilot-data-disk
+    name: "{{ e2e_autopilot_pvc_name | default(e2e_autopilot_vm ~ '-data-disk') }}"
   register: e2e_autopilot_pvc
 
 - name: Module 05 - Require selected and expanded Portworx data disk
@@ -46,7 +46,7 @@
       - e2e_autopilot_pvc.resources[0].metadata.labels.expand | default('') == 'true'
       - e2e_autopilot_pvc.resources[0].status.phase == 'Bound'
       - e2e_autopilot_pvc.resources[0].spec.storageClassName == 'px-rwx-block-kubevirt'
-      - e2e_autopilot_pvc.resources[0].status.capacity.storage in ['10Gi', '20Gi', '40Gi']
+      - e2e_autopilot_pvc.resources[0].status.capacity.storage in ['10Gi', '20Gi']
     fail_msg: Expected the lab's 5Gi disk to have doubled to 10Gi or 20Gi under Autopilot.
 
 - name: Module 05 - Get Autopilot events across namespaces

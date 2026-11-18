@@ -1,0 +1,209 @@
+---
+# Offline tests: no connection to a cluster and no destructive exercises.
+- name: Test student workflow wiring templates and reporting
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - ../vars.yml
+  tasks:
+    - name: Set isolated template fixture values
+      ansible.builtin.set_fact:
+        e2e_namespace: test-vmtest
+        e2e_guest_vm: test-centos
+        e2e_io_namespace: test-appio
+        e2e_io_storageclass: test-dynamic-io
+
+    - name: Read main workflow
+      ansible.builtin.set_fact:
+        workflow: "{{ lookup('file', '../e2e.yml') | from_yaml }}"
+
+    - name: Require six ordered module playbook imports
+      ansible.builtin.assert:
+        that:
+          - >-
+            workflow | map('dict2items') | flatten
+            | selectattr('key', 'equalto', 'ansible.builtin.import_playbook') | map(attribute='value') | list ==
+            ['modules/module-01.yml', 'modules/module-02.yml', 'modules/module-03.yml',
+             'modules/module-04.yml', 'modules/module-05.yml', 'modules/module-06.yml']
+          - workflow[0].tasks[0]['ansible.builtin.assert'].that == 'e2e_allow_disruptive | bool'
+
+    - name: Render regular and Autopilot VM manifests
+      ansible.builtin.set_fact:
+        regular_vm: "{{ lookup('template', '../templates/student-vm.yml.j2') | from_yaml }}"
+        autopilot_vm: "{{ lookup('template', '../templates/student-vm.yml.j2',
+                         template_vars={'e2e_guest_data_disk': true}) | from_yaml }}"
+        fio_deployment: "{{ lookup('template', '../templates/fio-deployment.yml.j2') | from_yaml }}"
+
+    - name: Verify student VM and fio workload shapes
+      ansible.builtin.assert:
+        that:
+          - regular_vm.metadata.namespace == 'test-vmtest'
+          - regular_vm.spec.dataVolumeTemplates | length == 1
+          - regular_vm.spec.dataVolumeTemplates[0].spec.storage.storageClassName is not defined
+          - regular_vm.spec.runStrategy == 'Always'
+          - autopilot_vm.spec.dataVolumeTemplates | length == 2
+          - autopilot_vm.spec.dataVolumeTemplates[1].spec.storage.resources.requests.storage == '5Gi'
+          - autopilot_vm.spec.template.spec.volumes | length == 3
+          - fio_deployment.metadata.namespace == 'test-appio'
+          - "'--size=6G' in fio_deployment.spec.template.spec.containers[0].args[0]"
+          - "'--rw=randread' in fio_deployment.spec.template.spec.containers[0].args[0]"
+          - "'--runtime=15' in fio_deployment.spec.template.spec.containers[0].args[0]"
+
+    - name: Check fio workload shell syntax without running fio
+      ansible.builtin.command:
+        argv: [/bin/sh, -n]
+        stdin: "{{ fio_deployment.spec.template.spec.containers[0].args[0] }}"
+      changed_when: false
+
+    - name: Read installation and destructive exercise definitions
+      ansible.builtin.set_fact:
+        install_tasks: "{{ lookup('file', '../tasks/student-module-01.yml') | from_yaml }}"
+        ha_tasks: "{{ lookup('file', '../tasks/student-module-03.yml') | from_yaml }}"
+        restore_tasks: "{{ lookup('file', '../tasks/student-module-04.yml') | from_yaml }}"
+
+    - name: Check installation ordering disk spec and destructive exercise guards
+      ansible.builtin.assert:
+        that:
+          - >-
+            (install_tasks | map(attribute='name') | list).index('Module 01 - Deploy OpenShift Virtualization') <
+            (install_tasks | map(attribute='name') | list).index(
+              'Module 01 - Install virtctl after HyperConverged is Available')
+          - >-
+            (install_tasks | selectattr('name', 'equalto', 'Module 01 - Create the student StorageCluster')
+             | first)['kubernetes.core.k8s'].definition.spec.cloudStorage.deviceSpecs == ['type=gp3,size=150']
+          - ha_tasks[0]['ansible.builtin.assert'].that == 'e2e_allow_disruptive | bool'
+          - restore_tasks[0]['ansible.builtin.assert'].that == 'e2e_allow_disruptive | bool'
+
+    - name: Create isolated reporting fixture directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lb8002-report-test-
+      register: test_directory
+
+    - name: Test success and failure reporting
+      block:
+        - name: Exercise successful module reporting
+          ansible.builtin.include_tasks: ../tasks/run-module.yml
+          vars:
+            e2e_artifacts_dir: "{{ test_directory.path }}/results"
+            e2e_work_dir: "{{ test_directory.path }}/private"
+            e2e_module_id: fixture-pass
+            e2e_module_file: "{{ playbook_dir }}/fixtures/module-pass.yml"
+
+        - name: Read successful report
+          ansible.builtin.slurp:
+            src: "{{ test_directory.path }}/results/fixture-pass.json"
+          register: pass_report
+
+        - name: Verify successful report
+          ansible.builtin.assert:
+            that:
+              - (pass_report.content | b64decode | from_json).status == 'passed'
+              - (pass_report.content | b64decode | from_json).duration_seconds | int >= 0
+
+        - name: Test failed exercise is not swallowed
+          block:
+            - name: Exercise failed module reporting
+              ansible.builtin.include_tasks: ../tasks/run-module.yml
+              vars:
+                e2e_artifacts_dir: "{{ test_directory.path }}/results"
+                e2e_work_dir: "{{ test_directory.path }}/private"
+                e2e_module_id: fixture-fail
+                e2e_module_file: "{{ playbook_dir }}/fixtures/module-fail.yml"
+            - name: Reject unexpected success
+              ansible.builtin.fail:
+                msg: Failed fixture must stop the workflow.
+          rescue:
+            - name: Verify module failure propagated
+              ansible.builtin.assert:
+                that:
+                  - ansible_failed_task.name == 'Stop workflow on module failure'
+            - name: Read failed report
+              ansible.builtin.slurp:
+                src: "{{ test_directory.path }}/results/fixture-fail.json"
+              register: fail_report
+            - name: Verify failed task is recorded
+              ansible.builtin.assert:
+                that:
+                  - (fail_report.content | b64decode | from_json).status == 'failed'
+                  - (fail_report.content | b64decode | from_json).failed_task == 'Fixture exercise fails'
+        - name: Run the complete imported pipeline with harmless fixture exercises
+          ansible.builtin.command:
+            argv:
+              - ansible-playbook
+              - -i
+              - localhost,
+              - "{{ playbook_dir }}/../e2e.yaml"
+              - -e
+              - >-
+                {{ {'e2e_module_file': playbook_dir ~ '/fixtures/module-pass.yml',
+                    'e2e_allow_disruptive': true,
+                    'e2e_work_dir': test_directory.path ~ '/pipeline-private',
+                    'e2e_artifacts_dir': test_directory.path ~ '/pipeline-results'} | to_json }}
+          changed_when: false
+
+        - name: Read all six pipeline fixture reports
+          ansible.builtin.slurp:
+            src: "{{ test_directory.path }}/pipeline-results/module-{{ item }}.json"
+          loop: ['01', '02', '03', '04', '05', '06']
+          register: pipeline_reports
+
+        - name: Verify all six imported module playbooks executed their exercise
+          ansible.builtin.assert:
+            that: (item.content | b64decode | from_json).status == 'passed'
+          loop: "{{ pipeline_reports.results }}"
+          loop_control:
+            label: "{{ item.item }}"
+
+        - name: Check module tag selection through the main entry point
+          ansible.builtin.command:
+            argv:
+              - ansible-playbook
+              - -i
+              - localhost,
+              - "{{ playbook_dir }}/../e2e.yml"
+              - --tags
+              - module02
+              - -e
+              - >-
+                {{ {'e2e_module_file': playbook_dir ~ '/fixtures/module-pass.yml',
+                    'e2e_work_dir': test_directory.path ~ '/tag-private',
+                    'e2e_artifacts_dir': test_directory.path ~ '/tag-results'} | to_json }}
+          changed_when: false
+
+        - name: Find tagged pipeline reports
+          ansible.builtin.find:
+            paths: "{{ test_directory.path }}/tag-results"
+            patterns: '*.json'
+          register: tagged_reports
+
+        - name: Require only module 02 to have executed
+          ansible.builtin.assert:
+            that:
+              - tagged_reports.matched == 1
+              - tagged_reports.files[0].path | basename == 'module-02.json'
+
+        - name: Verify full-run safety gate without risking a real exercise
+          ansible.builtin.command:
+            argv:
+              - ansible-playbook
+              - -i
+              - localhost,
+              - "{{ playbook_dir }}/../e2e.yml"
+              - -e
+              - >-
+                {{ {'e2e_module_file': playbook_dir ~ '/fixtures/module-pass.yml',
+                    'e2e_allow_disruptive': false,
+                    'e2e_work_dir': test_directory.path ~ '/guard-private',
+                    'e2e_artifacts_dir': test_directory.path ~ '/guard-results'} | to_json }}
+          register: guarded_run
+          changed_when: false
+          failed_when: >-
+            guarded_run.rc != 2 or
+            'pass -e e2e_allow_disruptive=true' not in guarded_run.stdout
+      always:
+        - name: Remove only the isolated fixture directory
+          ansible.builtin.file:
+            path: "{{ test_directory.path }}"
+            state: absent

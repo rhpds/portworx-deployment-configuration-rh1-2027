@@ -1,0 +1,20 @@
+---
+- name: Module 05 - Autopilot capacity expansion
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [module05]
+  vars_files:
+    - ../vars.yml
+  vars:
+    e2e_module_id: module-05
+    e2e_module_file: student-module-05.yml
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ e2e_kubeconfig }}"
+  environment:
+    KUBECONFIG: "{{ e2e_kubeconfig }}"
+  tasks:
+    - name: Run module 05 and record its result
+      ansible.builtin.import_tasks: ../tasks/run-module.yml
+      tags: [module05]

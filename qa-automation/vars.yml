@@ -1,0 +1,27 @@
+---
+# Shared settings for the full workflow and standalone module playbooks.
+# Override with -e; one workflow per disposable cluster, not shared-tenant safe.
+e2e_kubeconfig: >-
+  {{ k8s_kubeconfig | default(lookup('env', 'K8S_AUTH_KUBECONFIG')
+     | default(lookup('env', 'KUBECONFIG'), true)) }}
+e2e_namespace: vmtest
+e2e_vm: centos-stream9-example
+e2e_console_vm: centos-stream9-console-example
+e2e_autopilot_vm: centos-stream9-autopilot
+e2e_autopilot_pvc_name: "{{ e2e_autopilot_vm }}-data-disk"
+e2e_artifacts_dir: /tmp/lb8002-e2e-results
+e2e_work_dir: /tmp/lb8002-e2e-private
+e2e_ssh_key: "{{ e2e_work_dir }}/id_rsa"
+e2e_retries: 90
+e2e_delay: 10
+e2e_autopilot_settle_seconds: 60
+# Must be explicitly enabled on disposable QA clusters for modules 03 and 04.
+e2e_allow_disruptive: "{{ lookup('env', 'LB8002_E2E_ALLOW_DISRUPTIVE') | default('false', true) | bool }}"
+e2e_runner_node: "{{ lookup('env', 'NODE_NAME') | default('', true) }}"
+e2e_portworx_image: docker.io/portworx/oci-monitor:3.7.1
+e2e_portworx_package: portworx-certified
+e2e_portworx_channel: stable
+e2e_portworx_catalog: certified-operators
+e2e_io_namespace: appio
+e2e_io_storageclass: px-dynamic-io
+e2e_fio_image: ghcr.io/kastenhq/kubestr:v0.4.36

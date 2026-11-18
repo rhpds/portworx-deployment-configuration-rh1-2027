@@ -1,0 +1,207 @@
+---
+# Student source: content/modules/ROOT/pages/module-06.adoc.
+- name: Module 06 - Select a healthy Portworx CLI target
+  ansible.builtin.include_tasks: pxctl-target.yml
+
+- name: Module 06 - Validate reconciliation wait
+  ansible.builtin.assert:
+    that: e2e_autopilot_settle_seconds | int >= 30
+
+- name: Module 06 - Reset cleanup ownership flags
+  ansible.builtin.set_fact:
+    e2e_student_io_namespace_owned: false
+    e2e_student_io_class_owned: false
+
+- name: Module 06 - Execute the student dynamic I/O exercise
+  block:
+    - name: Module 06 - Reset owned workload namespace for a repeatable run
+      ansible.builtin.include_tasks: reset-owned-namespace.yml
+      vars:
+        e2e_owned_namespace: "{{ e2e_io_namespace }}"
+
+    - name: Module 06 - Record workload namespace ownership
+      ansible.builtin.set_fact:
+        e2e_student_io_namespace_owned: true
+
+    - name: Module 06 - Inspect existing StorageClass ownership
+      kubernetes.core.k8s_info:
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: "{{ e2e_io_storageclass }}"
+      register: e2e_existing_io_class
+
+    - name: Module 06 - Refuse to overwrite a student StorageClass
+      ansible.builtin.assert:
+        that: >-
+          e2e_existing_io_class.resources | length == 0 or
+          (e2e_existing_io_class.resources[0].metadata.labels | default({})).get('lab.rhpds.com/e2e', '') == 'lb8002'
+
+    - name: Module 06 - Create the student dynamic I/O StorageClass
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: storage.k8s.io/v1
+          kind: StorageClass
+          metadata:
+            name: "{{ e2e_io_storageclass }}"
+            labels:
+              lab.rhpds.com/e2e: lb8002
+          provisioner: pxd.portworx.com
+          parameters:
+            repl: '3'
+            io_throttle_iops_scale_factor: '50'
+            io_throttle_min_iops: '300'
+            io_throttle_rd_iops: '1500'
+            io_throttle_wr_iops: '1500'
+            io_throttle_bw_scale_factor: '0.01'
+            io_throttle_min_bw: '50'
+            io_throttle_rd_bw: '400'
+            io_throttle_wr_bw: '400'
+          reclaimPolicy: Delete
+          volumeBindingMode: WaitForFirstConsumer
+          allowVolumeExpansion: true
+
+    - name: Module 06 - Record StorageClass ownership
+      ansible.builtin.set_fact:
+        e2e_student_io_class_owned: true
+
+    - name: Module 06 - Create the 10Gi student PVC
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: fio-data
+            namespace: "{{ e2e_io_namespace }}"
+          spec:
+            storageClassName: "{{ e2e_io_storageclass }}"
+            accessModes: [ReadWriteOnce]
+            resources:
+              requests:
+                storage: 10Gi
+
+    - name: Module 06 - Start the real fio Deployment with the student 6Gi dataset
+      kubernetes.core.k8s:
+        state: present
+        wait: true
+        wait_timeout: 900
+        definition: "{{ lookup('template', '../templates/fio-deployment.yml.j2') | from_yaml }}"
+
+    - name: Module 06 - Find the running fio pod
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ e2e_io_namespace }}"
+        label_selectors: [app=fio-tenant]
+        field_selectors: [status.phase=Running]
+      register: e2e_fio_pods
+      retries: "{{ e2e_retries }}"
+      delay: "{{ e2e_delay }}"
+      until: e2e_fio_pods.resources | length == 1
+
+    - name: Module 06 - Save original pod identity and restart count
+      ansible.builtin.set_fact:
+        e2e_fio_original_uid: "{{ e2e_fio_pods.resources[0].metadata.uid }}"
+        e2e_fio_original_restarts: "{{ e2e_fio_pods.resources[0].status.containerStatuses[0].restartCount }}"
+
+    - name: Module 06 - Verify scaling through 10Gi 20Gi and 40Gi under real I/O
+      ansible.builtin.include_tasks: student-module-06-resize.yml
+      loop:
+        - {size: 10Gi, iops: '500'}
+        - {size: 20Gi, iops: '1000'}
+        - {size: 40Gi, iops: '1500'}
+      loop_control:
+        loop_var: e2e_io_step
+        label: "{{ e2e_io_step.size }} / {{ e2e_io_step.iops }} IOPS"
+
+    - name: Module 06 - Opt out of automatic throttle updates
+      kubernetes.core.k8s:
+        state: patched
+        kind: PersistentVolumeClaim
+        namespace: "{{ e2e_io_namespace }}"
+        name: fio-data
+        definition:
+          metadata:
+            annotations:
+              portworx.io/throttle-auto-update: 'false'
+
+    - name: Module 06 - Remove IOPS limits manually
+      kubernetes.core.k8s_exec:
+        namespace: portworx
+        pod: "{{ e2e_px_pod }}"
+        container: portworx
+        command: >-
+          /opt/pwx/bin/pxctl volume update --max_iops off,off {{ e2e_student_io_pvc.resources[0].spec.volumeName }}
+      register: e2e_student_io_optout
+      failed_when: e2e_student_io_optout.rc != 0
+
+    - name: Module 06 - Wait for an Autopilot reconciliation interval
+      ansible.builtin.pause:
+        seconds: "{{ e2e_autopilot_settle_seconds }}"
+
+    - name: Module 06 - Inspect volume after opt-out
+      kubernetes.core.k8s_exec:
+        namespace: portworx
+        pod: "{{ e2e_px_pod }}"
+        container: portworx
+        command: "/opt/pwx/bin/pxctl volume inspect {{ e2e_student_io_pvc.resources[0].spec.volumeName }}"
+      register: e2e_student_io_final
+      changed_when: false
+      failed_when: e2e_student_io_final.rc != 0
+
+    - name: Module 06 - Require IOPS limits to remain disabled
+      ansible.builtin.assert:
+        that:
+          - e2e_student_io_final.stdout | trim | length > 0
+          - >-
+            e2e_student_io_final.stdout
+            | regex_findall('(?im)^\s*Max\s*(?:Read|Write)\s*IOPS\s*:\s*(\S+)')
+            | map('lower') | difference(['0', 'off', 'unlimited']) | length == 0
+
+    - name: Module 06 - Measure workload IOPS without the throttle
+      ansible.builtin.include_tasks: fio-sample.yml
+      vars:
+        e2e_io_stage: unthrottled
+
+    - name: Module 06 - Read final workload pod state
+      kubernetes.core.k8s_info:
+        kind: Pod
+        namespace: "{{ e2e_io_namespace }}"
+        label_selectors: [app=fio-tenant]
+      register: e2e_fio_final_pods
+
+    - name: Module 06 - Verify expansion did not restart the workload
+      ansible.builtin.assert:
+        that:
+          - e2e_fio_final_pods.resources | length == 1
+          - e2e_fio_final_pods.resources[0].metadata.uid == e2e_fio_original_uid
+          - e2e_fio_final_pods.resources[0].status.containerStatuses[0].restartCount == e2e_fio_original_restarts | int
+
+  always:
+    - name: Module 06 - Remove only the E2E-owned workload namespace
+      kubernetes.core.k8s:
+        state: absent
+        kind: Namespace
+        name: "{{ e2e_io_namespace }}"
+        wait: true
+        wait_timeout: 120
+      when: e2e_student_io_namespace_owned | bool
+      register: e2e_student_io_namespace_cleanup
+      ignore_errors: true  # Attempt StorageClass cleanup before reporting failure.
+
+    - name: Module 06 - Remove only the E2E-owned StorageClass
+      kubernetes.core.k8s:
+        state: absent
+        api_version: storage.k8s.io/v1
+        kind: StorageClass
+        name: "{{ e2e_io_storageclass }}"
+      when: e2e_student_io_class_owned | bool
+      register: e2e_student_io_class_cleanup
+      ignore_errors: true
+
+    - name: Module 06 - Require successful cleanup
+      ansible.builtin.assert:
+        that:
+          - not (e2e_student_io_namespace_cleanup is failed)
+          - not (e2e_student_io_class_cleanup is failed)
+        fail_msg: Inspect E2E-owned appio namespace, px-dynamic-io StorageClass and their PVs for leftovers.

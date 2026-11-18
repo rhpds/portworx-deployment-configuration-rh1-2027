@@ -1,0 +1,25 @@
+---
+- name: Module 06 - Mark the start of this measurement window
+  ansible.builtin.set_fact:
+    e2e_fio_measurement_started: "{{ now(utc=true, fmt='%s') | int }}"
+
+- name: Module 06 - Wait for a complete fio sample started after the limit change
+  kubernetes.core.k8s_exec:
+    namespace: "{{ e2e_io_namespace }}"
+    pod: "{{ e2e_fio_pods.resources[0].metadata.name }}"
+    container: fio
+    command: cat /data/fio-sample.json
+  register: e2e_fio_sample
+  changed_when: false
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_fio_sample.rc == 0
+    - (e2e_fio_sample.stdout | from_json).started_epoch | int > e2e_fio_measurement_started | int
+    - (e2e_fio_sample.stdout | from_json).fio.jobs[0].error == 0
+
+- name: Module 06 - Save measured throughput alongside the enforced limit
+  ansible.builtin.copy:
+    dest: "{{ e2e_artifacts_dir }}/fio-{{ e2e_io_stage }}.json"
+    mode: '0600'
+    content: "{{ e2e_fio_sample.stdout | from_json | to_nice_json }}"

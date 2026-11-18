@@ -1,0 +1,42 @@
+---
+# Student source: content/modules/ROOT/pages/module-02.adoc.
+- name: Module 02 - Reset only owned exercise resources for a repeatable run
+  ansible.builtin.include_tasks: reset-owned-namespace.yml
+  vars:
+    e2e_owned_namespace: "{{ e2e_namespace }}"
+
+- name: Module 02 - Install cluster-matched virtctl for standalone execution
+  ansible.builtin.import_tasks: virtctl.yml
+  when: e2e_virtctl is not defined
+
+- name: Module 02 - Generate exercise SSH key without replacing an existing key
+  ansible.builtin.command:
+    argv: [ssh-keygen, -t, rsa, -b, '4096', -f, "{{ e2e_ssh_key }}", -N, '']
+    creates: "{{ e2e_ssh_key }}"
+  no_log: true
+
+- name: Module 02 - Create authorized SSH key secret
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: authorized-keys
+        namespace: "{{ e2e_namespace }}"
+      stringData:
+        key: "{{ lookup('file', e2e_ssh_key ~ '.pub') }}"
+  no_log: true
+
+- name: Module 02 - Create CLI student VM
+  ansible.builtin.include_tasks: create-student-vm.yml
+  vars:
+    e2e_guest_vm: "{{ e2e_vm }}"
+
+- name: Module 02 - Create API equivalent of the second console-created VM
+  ansible.builtin.include_tasks: create-student-vm.yml
+  vars:
+    e2e_guest_vm: "{{ e2e_console_vm }}"
+
+- name: Module 02 - Validate VM storage and guest access
+  ansible.builtin.import_tasks: module-02.yml

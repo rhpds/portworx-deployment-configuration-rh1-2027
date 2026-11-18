@@ -1,0 +1,20 @@
+---
+- name: Module 06 - Dynamic application I/O
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tags: [module06]
+  vars_files:
+    - ../vars.yml
+  vars:
+    e2e_module_id: module-06
+    e2e_module_file: student-module-06.yml
+  module_defaults:
+    group/kubernetes.core.k8s:
+      kubeconfig: "{{ e2e_kubeconfig }}"
+  environment:
+    KUBECONFIG: "{{ e2e_kubeconfig }}"
+  tasks:
+    - name: Run module 06 and record its result
+      ansible.builtin.import_tasks: ../tasks/run-module.yml
+      tags: [module06]

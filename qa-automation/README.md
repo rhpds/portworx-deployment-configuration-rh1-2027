@@ -1,125 +1,128 @@
-# LB8002 QA automation
+# LB8002 full student E2E
 
 Tracking: **RHDPCD-2096**. Ansible only: no custom Python scripts.
 
-## Two different contracts
+## Contract and layout
 
-- `healthcheck.yml`: fresh-environment readiness before the student starts.
-- `e2e.yml`: **post-solve module validation**, based on
-  `content/modules/ROOT/pages/pxe-osv-01.adoc` through `pxe-osv-06.adoc`.
-  It does not implement a solver or replay every student step.
+`healthcheck.yml` checks a fresh CI before the student starts.
+`e2e.yml` now **performs the student exercises**, then validates their outcomes;
+it no longer requires a manually solved environment. `e2e.yaml` is an alias.
+Source of truth: `content/modules/ROOT/pages/module-01.adoc` through `module-06.adoc`.
 
-Prepare module outcomes with a solver or a completed QA walkthrough first.
-The fresh health check must not be included in post-solve E2E: fresh checks
-expect Portworx and HyperConverged not to be deployed yet.
+The entry point imports these playbooks sequentially:
 
-## Per-module validation
-
-| Task file | Validates |
+| Playbook | Exercise |
 | --- | --- |
-| `tasks/module-01.yml` | Ready cluster, three online Portworx storage nodes, Available HyperConverged, Portworx CSI classes, default VM class, RWX Block profile, Ready CentOS boot source, enabled console plugin, available STORK/Autopilot and user workload monitoring |
-| `tasks/module-02.yml` | Ready VM, Running VMI, Bound Portworx RWX Block disk and working guest SSH |
-| `tasks/module-03.yml` | Successful cross-node migration record and intact guest persistence marker. Module 01 checks recovered node/storage health |
-| `tasks/module-04.yml` | Ready snapshot, completed restore referencing that snapshot, nonempty guest `/etc/fstab` |
-| `tasks/module-05.yml` | Rule selectors/threshold/action, selected namespace/PVC, 10Gi or 20Gi expanded capacity, completed Autopilot action event, guest filesystem grown beyond original 5Gi |
-| `tasks/module-06.yml` | Isolated 10 → 20 → 40Gi PVC smoke test, enforced read/write limits of 500 → 1000 → 1500 IOPS, persistent data across expansion and opt-out retaining manually disabled limits |
+| `modules/module-01.yml` | Create the student project, enable monitoring, install Portworx operator/plugin and StorageCluster, wait for three online nodes, deploy HyperConverged, wait for storage classes and CentOS boot image, download matching virtctl, validate installation |
+| `modules/module-02.yml` | Generate an exercise SSH key, create authorized-keys, provision two CentOS VMs, wait for guest access and validate RWX Block disks |
+| `modules/module-03.yml` | Write guest data, initiate a new cross-node live migration, verify persistence, reboot the hosting worker, require VM failover/restart on another node, verify data and node/storage recovery |
+| `modules/module-04.yml` | Take a new snapshot, delete and confirm missing guest /etc/fstab, stop VM, restore this snapshot, restart VM and compare the restored checksum |
+| `modules/module-05.yml` | Provision the Autopilot VM with a 5Gi disk, create the rule/labels, partition/format/mount, write 4Gi, wait for genuine automatic expansion and a new action event, grow the guest filesystem |
+| `modules/module-06.yml` | Create the student StorageClass/PVC/fio Deployment, write 6Gi, measure random-read IOPS at 10/20/40Gi, verify 500/1000/1500 configured limits, opt out, measure unthrottled IOPS, verify no workload restart, clean up |
 
-`tasks/pxctl-target.yml` avoids stale pods on unavailable nodes.
-`tasks/module-06-resize.yml` performs each smoke expansion/assertion.
-Missing module evidence fails validation; it is not silently skipped.
+Shared settings are in `vars.yml`. Student execution is in
+`tasks/student-module-*.yml`; existing `tasks/module-01.yml` through
+`module-05.yml` supply validation checkpoints. The older isolated
+`tasks/module-06.yml` smoke fixture is not invoked by the full workflow.
 
-This is outcome validation, not a claim that every student action was tested:
-no node failure is injected or proven, no destructive guest file deletion or
-snapshot restore is repeated, and no browser-rendering check is performed.
-The dynamic I/O smoke checks configured/enforced limits using `pxctl`, not fio
-throughput, which the content notes may be limited by the underlying disks.
-
-## Solver prerequisites
-
-Retain these artifacts on a disposable, solved LB8002 environment:
-
-- Installation/configuration from module 01.
-- Namespace `vmtest`, VM `centos-stream9-example`, and its authorized SSH key.
-- Guest `~/text` containing `Hello from Red Hat and Portworx`.
-- A successful cross-node migration record for that VM.
-- A Ready VM snapshot and completed restore from it; VM running again with a
-  nonempty `/etc/fstab`.
-- VM `centos-stream9-autopilot`, PVC `centos-stream9-autopilot-data-disk`, rule
-  `volume-resize`, and the namespace/PVC `expand=true` labels. Autopilot has
-  grown the 5Gi disk and the solver has grown the guest partition/filesystem.
-- A recent `ActiveActionsTaken` event for `volume-resize`.
-
-Migration records and Kubernetes events are ephemeral. Run E2E promptly after
-solving. If evidence has expired, rerun that solver exercise rather than ignore
-it. Events establish that the rule acted, not exclusive proof that this PVC's
-size was changed by Autopilot rather than by an administrator.
-
-Module 06 cleans up student resources in the content, so validation does not
-require `appio` or `px-dynamic-io` to exist. Instead it provisions a lightweight
-smoke fixture with the same StorageClass parameters and image as the content.
-It writes a tiny marker, not a multi-GiB fio dataset.
+Console actions are reproduced through Kubernetes APIs. This provides equivalent
+resource operations, **not browser/UI coverage**. Observed fio throughput is
+recorded, not required to reach each ceiling: the lab disks can be the bottleneck.
 
 ## Run
 
-Run from an execution environment / bastion with `ansible-core`,
-`kubernetes.core`, its Kubernetes client dependencies, `oc`, cluster admin access,
-and the private key authorized by the solver VM. For guest validation the
-playbook downloads the Linux x86_64 `virtctl` matching the cluster into a private
-temporary directory. The runner must be able to reach the cluster client download
-URL and extract a gzip tar archive; no system-wide installation is required.
-The selector uses the archive URL rather than the console's display label.
-The `virtctl-clidownloads-kubevirt-hyperconverged` ConsoleCLIDownload must exist:
-installing the operator alone does not create a completed Virtualization setup.
-Complete module 01 and wait for the HyperConverged instance to become Available
-before running post-solve E2E.
+Use a **disposable, dedicated LB8002 cluster** in the fresh health-check state.
+The OpenShift Virtualization operator is preinstalled; HyperConverged and
+Portworx are installed by module 01. No manual solver is required.
+
+The runner needs `ansible-core`, `kubernetes.core`, its Kubernetes client
+dependencies, `oc`, `ssh`, `ssh-keygen`, gzip/tar support, cluster-admin access,
+and access to the catalog, workload images, boot images and client downloads.
+The generated exercise SSH key stays in `e2e_work_dir`, outside the repository
+and separate from exported result JSON. Never commit or publish private keys.
 
 ```sh
 export KUBECONFIG=/path/to/lab.kubeconfig
-ansible-playbook qa-automation/e2e.yml \
-  -e e2e_ssh_key=/path/to/solver-guest-key
+ansible-playbook -i localhost, qa-automation/healthcheck.yml
 
-# Validate only an individual module:
-ansible-playbook qa-automation/e2e.yml --tags module04 \
-  -e e2e_ssh_key=/path/to/solver-guest-key
+# Required consent: module 03 reboots a worker; module 04 deletes/restores fstab.
+ansible-playbook -i localhost, qa-automation/e2e.yml \
+  -e e2e_allow_disruptive=true
+
+# A standalone module (earlier module prerequisites must already exist):
+ansible-playbook -i localhost, qa-automation/modules/module-02.yml
+
+# Or select a module through the main entry point:
+ansible-playbook -i localhost, qa-automation/e2e.yml --tags module04 \
+  -e e2e_allow_disruptive=true
 ```
 
-`K8S_AUTH_KUBECONFIG` takes precedence over `KUBECONFIG`.
-Polling defaults to 90 retries with a 10-second delay (`e2e_retries`,
-`e2e_delay`). HCO/consumer readiness waits are capped at 900 seconds and guest
-SSH tasks at 60 seconds per attempt. Opt-out verification waits 60 seconds
-(`e2e_autopilot_settle_seconds`, minimum 30); increase this if Autopilot uses a
-longer reconciliation interval.
+`e2e.yaml` accepts the same options. `K8S_AUTH_KUBECONFIG` takes precedence over
+`KUBECONFIG`; `-e k8s_kubeconfig=...` overrides both. Polling defaults to 90
+retries with a 10-second delay. Override shared settings with `-e`.
 
-To avoid all smoke writes, pass `-e e2e_module06_enabled=false`. Module 06 is
-then **not validated**: this must not be reported as a full six-module pass.
+The full workflow refuses to start without explicit destructive-exercise
+consent. Selecting module 03/04 independently also requires that consent;
+these exercises are never silently skipped and reported as full coverage.
+The Showroom launcher can opt in by setting `LB8002_E2E_ALLOW_DISRUPTIVE=true`
+in the runner container. CLI `-e e2e_allow_disruptive=...` takes precedence.
 
-## Safety and cleanup
+## Load testing and results
 
-Modules 01–05 read API / guest evidence only. No worker reboot, VM restart,
-snapshot restore or solver-resource modification occurs.
+Run **one workflow per disposable cluster**, scaling load across separately
+ordered CIs. This installs cluster-scoped operators, storage, monitoring and
+Autopilot rules and reboots a worker; parallel workflows on a shared cluster
+are not supported. A load-test scheduler/concurrency controller is not included.
 
-Module 06 creates a generated `lb8002-e2e-*` namespace and a matching
-`px-lb8002-e2e-*` StorageClass with Delete reclaim policy. An `always` block
-attempts both cleanups and reports any cleanup failure. It allocates up to 40Gi
-logical replicated storage: use a QA lab with sufficient free capacity only.
-Deleting the namespace requests PVC/PV/backend-volume cleanup; backend reclaim
-may finish asynchronously. After interruption or cleanup failure, inspect these
-resources and their PVs. Never delete similarly named student resources.
+Each module writes `module-01.json` through `module-06.json` under
+`e2e_artifacts_dir` (default `/tmp/lb8002-e2e-results`) with status, elapsed
+seconds and the failed task name. The first failure stops subsequent modules.
+Module 06 also saves `fio-10Gi.json`, `fio-20Gi.json`, `fio-40Gi.json`, and
+`fio-unthrottled.json` with the actual fio results, sampled after each limit
+transition. Export these files before destroying the CI or restarting Showroom:
+the default directories are ephemeral local runner storage.
 
-Guest SSH disables host-key checking only for ephemeral lab guests. Never run
-with production cluster credentials.
+The main entry point clears previous module/fio result JSON before starting.
+Module 02 resets only the E2E-owned student namespace, recreating VMs, disks and
+snapshot evidence so a full workflow can run again on the same dedicated CI.
+Module 06 likewise resets its owned workload namespace before creating the PVC.
+Module 05 requires an unexpanded 5Gi disk: rerun the full pipeline (or module 02
+first), not module 05 alone against a previously expanded VM. Use a new
+`e2e_artifacts_dir` per run if prior results must be retained.
 
-## Static validation
+## Disruption, ownership and cleanup
+
+Namespaces `vmtest` and `appio` must be absent or carry the ownership label
+`lab.rhpds.com/e2e=lb8002`. E2E refuses to adopt existing student namespaces or
+an unowned dynamic-I/O StorageClass. Do not relabel student resources to bypass
+this protection. Operator/monitoring changes remain cluster-wide.
+
+Module 03 excludes nodes hosting Showroom from migration/reboot destinations.
+For another in-cluster runner, set `-e e2e_runner_node=<node-name>` (or set
+`NODE_NAME` in its environment). If no safe worker is available, the module
+fails rather than rebooting the runner. A brief reboot that does not actually
+produce cross-node VM failover is a failed HA test, not a claimed success.
+
+Modules 01-05 leave installation, VMs, snapshots and the rule for inspection.
+A subsequent module 02 run deletes/recreates the owned exercise namespace;
+never run it while inspecting or using the preceding run's VMs. Module 06 cleans up its owned workload namespace/StorageClass
+in an `always` block, including on failure, and reports cleanup failures.
+Destroy the disposable CI after collecting results. This is not a teardown of
+student resources or an unattended production test.
+
+## Offline validation
 
 ```sh
-# Offline regression tests for virtctl selection (ansible-core only):
+ansible-playbook -i localhost, qa-automation/e2e.yml --syntax-check
+for playbook in qa-automation/modules/*.yml; do
+  ansible-playbook -i localhost, "$playbook" --syntax-check
+done
 ansible-playbook -i localhost, qa-automation/tests/virtctl-selection.yml
-
-ansible-playbook qa-automation/e2e.yml --syntax-check
-ansible-lint qa-automation/e2e.yml
+ansible-playbook -i localhost, qa-automation/tests/student-workflow.yml
 yamllint -d '{extends: default, rules: {line-length: {max: 120}}}' \
-  qa-automation/e2e.yml qa-automation/tasks/
+  qa-automation/e2e.yml qa-automation/e2e.yaml qa-automation/vars.yml \
+  qa-automation/modules/ qa-automation/tasks/ qa-automation/tests/
 ```
 
-Syntax/lint checks do not replace a solved-lab execution. No live lab result is
-implied by static validation.
+Syntax, fixture and lint tests are not a live six-module acceptance run. Only
+report a full E2E pass after all six exercises succeed on a fresh lab.

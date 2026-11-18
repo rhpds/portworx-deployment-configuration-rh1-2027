@@ -1,0 +1,222 @@
+---
+# Student source: content/modules/ROOT/pages/module-03.adoc.
+- name: Module 03 - Require explicit permission for the worker reboot
+  ansible.builtin.assert:
+    that: e2e_allow_disruptive | bool
+    fail_msg: Module 03 reboots a worker. Use -e e2e_allow_disruptive=true only on a disposable QA cluster.
+
+- name: Module 03 - Check exercise namespace ownership
+  ansible.builtin.include_tasks: owned-namespace.yml
+  vars:
+    e2e_owned_namespace: "{{ e2e_namespace }}"
+
+- name: Module 03 - Prepare virtctl for standalone execution
+  ansible.builtin.import_tasks: virtctl.yml
+  when: e2e_virtctl is not defined
+
+- name: Module 03 - Write the student persistence marker
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_command: 'echo "Hello from Red Hat and Portworx" > ~/text'
+    e2e_guest_changes: true
+
+- name: Module 03 - Read VMI before migration
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_vm }}"
+  register: e2e_before_migration
+
+- name: Module 03 - Find Ready nodes and healthy Portworx target
+  ansible.builtin.include_tasks: pxctl-target.yml
+
+- name: Module 03 - Locate Showroom pods to protect the test runner
+  kubernetes.core.k8s_info:
+    kind: Pod
+  register: e2e_cluster_pods
+
+- name: Module 03 - Exclude Showroom nodes and the current VM node from migration targets
+  ansible.builtin.set_fact:
+    e2e_protected_nodes: >-
+      {{ (e2e_cluster_pods.resources | selectattr('metadata.namespace', 'search', 'showroom')
+          | selectattr('spec.nodeName', 'defined') | map(attribute='spec.nodeName') | list)
+         | union([e2e_runner_node]) | reject('equalto', '') | list }}
+    e2e_migration_candidates: []
+
+- name: Module 03 - Select only Ready non-control-plane worker destinations
+  ansible.builtin.set_fact:
+    e2e_migration_candidates: "{{ e2e_migration_candidates + [item.metadata.name] }}"
+  loop: "{{ e2e_nodes.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - "'node-role.kubernetes.io/worker' in item.metadata.labels"
+    - "'node-role.kubernetes.io/master' not in item.metadata.labels"
+    - "'node-role.kubernetes.io/control-plane' not in item.metadata.labels"
+    - item.metadata.name in e2e_ready_nodes
+    - item.metadata.name not in e2e_protected_nodes
+    - item.metadata.name != e2e_before_migration.resources[0].status.nodeName
+    - not (item.spec.unschedulable | default(false) | bool)
+
+- name: Module 03 - Require a safe worker destination
+  ansible.builtin.assert:
+    that: e2e_migration_candidates | length > 0
+    fail_msg: No safe migration/reboot target outside Showroom and the current VM node. Run from an external runner.
+
+- name: Module 03 - Start a fresh cross-node live migration
+  kubernetes.core.k8s:
+    state: present
+    generate_name: lb8002-migrate-
+    definition:
+      apiVersion: kubevirt.io/v1
+      kind: VirtualMachineInstanceMigration
+      metadata:
+        namespace: "{{ e2e_namespace }}"
+      spec:
+        vmiName: "{{ e2e_vm }}"
+        addedNodeSelector:
+          kubernetes.io/hostname: "{{ e2e_migration_candidates | first }}"
+  register: e2e_new_migration
+
+- name: Module 03 - Wait for this migration to succeed
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstanceMigration
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_new_migration.result.metadata.name }}"
+  register: e2e_current_migration
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_current_migration.resources[0].status.phase | default('') == 'Succeeded'
+
+- name: Module 03 - Verify migrated data and retain migration evidence
+  ansible.builtin.import_tasks: module-03.yml
+
+- name: Module 03 - Read migrated VMI
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_vm }}"
+  register: e2e_before_reboot
+
+- name: Module 03 - Require cross-node migration to the protected destination choice
+  ansible.builtin.assert:
+    that:
+      - e2e_before_reboot.resources[0].status.nodeName == (e2e_migration_candidates | first)
+      - e2e_before_reboot.resources[0].status.nodeName != e2e_before_migration.resources[0].status.nodeName
+      - e2e_before_reboot.resources[0].status.nodeName not in e2e_protected_nodes
+
+- name: Module 03 - Read guest boot identity before HA
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_command: cat /proc/sys/kernel/random/boot_id
+
+- name: Module 03 - Save pre-HA guest boot identity
+  ansible.builtin.set_fact:
+    e2e_guest_boot_before_ha: "{{ e2e_guest_result.stdout | trim }}"
+    e2e_reboot_node: "{{ e2e_before_reboot.resources[0].status.nodeName }}"
+
+- name: Module 03 - Read worker boot identity
+  kubernetes.core.k8s_info:
+    kind: Node
+    name: "{{ e2e_reboot_node }}"
+  register: e2e_worker_before_reboot
+
+- name: Module 03 - Recheck Showroom placement immediately before the reboot
+  kubernetes.core.k8s_info:
+    kind: Pod
+    field_selectors: ["spec.nodeName={{ e2e_reboot_node }}"]
+  register: e2e_reboot_target_pods
+
+- name: Module 03 - Refuse to reboot a node now hosting Showroom or the configured runner
+  ansible.builtin.assert:
+    that:
+      - e2e_reboot_node != e2e_runner_node
+      - >-
+        e2e_reboot_target_pods.resources | selectattr('metadata.namespace', 'search', 'showroom')
+        | list | length == 0
+
+- name: Module 03 - Schedule the student worker reboot
+  ansible.builtin.command:
+    argv:
+      - oc
+      - debug
+      - "node/{{ e2e_reboot_node }}"
+      - --
+      - chroot
+      - /host
+      - systemd-run
+      - --on-active=5s
+      - /usr/bin/systemctl
+      - reboot
+  changed_when: true
+  async: 120
+  poll: 5
+
+- name: Module 03 - Observe the worker leave Ready state
+  kubernetes.core.k8s_info:
+    kind: Node
+    name: "{{ e2e_reboot_node }}"
+  register: e2e_worker_down
+  retries: 120
+  delay: 5
+  until: >-
+    e2e_worker_down.resources | length == 1 and
+    (e2e_worker_down.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready')
+     | selectattr('status', 'equalto', 'True') | list | length == 0)
+
+- name: Module 03 - Wait for VM failover to a different node and a new instance
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstance
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_vm }}"
+  register: e2e_after_failover
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_after_failover.resources | length == 1
+    - e2e_after_failover.resources[0].status.phase | default('') == 'Running'
+    - e2e_after_failover.resources[0].status.nodeName | default(e2e_reboot_node) != e2e_reboot_node
+    - e2e_after_failover.resources[0].metadata.uid != e2e_before_reboot.resources[0].metadata.uid
+
+- name: Module 03 - Verify guest restart and persistent data after failover
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_command: >-
+      test "$(cat /proc/sys/kernel/random/boot_id)" != {{ e2e_guest_boot_before_ha | quote }} &&
+      test "$(cat ~/text)" = 'Hello from Red Hat and Portworx'
+
+- name: Module 03 - Wait for the rebooted worker to recover with a new boot identity
+  kubernetes.core.k8s_info:
+    kind: Node
+    name: "{{ e2e_reboot_node }}"
+  register: e2e_worker_recovered
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - >-
+      e2e_worker_recovered.resources[0].status.nodeInfo.bootID !=
+      e2e_worker_before_reboot.resources[0].status.nodeInfo.bootID
+    - >-
+      e2e_worker_recovered.resources[0].status.conditions | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True') | list | length == 1
+
+- name: Module 03 - Select recovered healthy Portworx target
+  ansible.builtin.include_tasks: pxctl-target.yml
+
+- name: Module 03 - Wait for all three Portworx nodes online again
+  kubernetes.core.k8s_exec:
+    namespace: portworx
+    pod: "{{ e2e_px_pod }}"
+    container: portworx
+    command: /opt/pwx/bin/pxctl status
+  register: e2e_ha_px_status
+  changed_when: false
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_ha_px_status.rc == 0
+    - "'3 node(s) with storage (3 online)' in e2e_ha_px_status.stdout"

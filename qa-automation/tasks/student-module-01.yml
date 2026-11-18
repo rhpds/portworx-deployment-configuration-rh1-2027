@@ -1,0 +1,240 @@
+---
+# Student source: content/modules/ROOT/pages/module-01.adoc.
+- name: Module 01 - Create the student project
+  ansible.builtin.include_tasks: owned-namespace.yml
+  vars:
+    e2e_owned_namespace: "{{ e2e_namespace }}"
+
+- name: Module 01 - Read monitoring configuration
+  kubernetes.core.k8s_info:
+    kind: ConfigMap
+    namespace: openshift-monitoring
+    name: cluster-monitoring-config
+  register: e2e_existing_monitoring
+
+- name: Module 01 - Enable user workload monitoring without dropping existing settings
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: cluster-monitoring-config
+        namespace: openshift-monitoring
+      data:
+        config.yaml: >-
+          {{ ((e2e_existing_monitoring.resources[0].data['config.yaml'] | default('{}') | from_yaml)
+              if e2e_existing_monitoring.resources | length > 0 else {})
+             | default({}, true) | combine({'enableUserWorkload': true}) | to_nice_yaml }}
+
+- name: Module 01 - Create Portworx operator namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: portworx
+
+- name: Module 01 - Install Portworx operator group and subscription
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      - apiVersion: operators.coreos.com/v1
+        kind: OperatorGroup
+        metadata:
+          name: portworx
+          namespace: portworx
+        spec:
+          targetNamespaces: [portworx]
+      - apiVersion: operators.coreos.com/v1alpha1
+        kind: Subscription
+        metadata:
+          name: portworx-certified
+          namespace: portworx
+        spec:
+          channel: "{{ e2e_portworx_channel }}"
+          name: "{{ e2e_portworx_package }}"
+          source: "{{ e2e_portworx_catalog }}"
+          sourceNamespace: openshift-marketplace
+          installPlanApproval: Automatic
+
+- name: Module 01 - Wait for installed Portworx CSV
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: portworx
+    label_selectors: ["operators.coreos.com/{{ e2e_portworx_package }}.portworx"]
+  register: e2e_portworx_csv
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: >-
+    e2e_portworx_csv.resources | selectattr('status.phase', 'defined')
+    | selectattr('status.phase', 'equalto', 'Succeeded') | list | length > 0
+
+- name: Module 01 - Read enabled console plugins
+  kubernetes.core.k8s_info:
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+  register: e2e_existing_console
+
+- name: Module 01 - Enable Portworx console plugin
+  kubernetes.core.k8s:
+    state: patched
+    api_version: operator.openshift.io/v1
+    kind: Console
+    name: cluster
+    definition:
+      spec:
+        plugins: "{{ (e2e_existing_console.resources[0].spec.plugins | default([])) | union(['portworx']) }}"
+
+- name: Module 01 - Find Thanos Querier
+  kubernetes.core.k8s_info:
+    api_version: route.openshift.io/v1
+    kind: Route
+    namespace: openshift-monitoring
+    name: thanos-querier
+  register: e2e_thanos
+
+- name: Module 01 - Create the student StorageCluster
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: core.libopenstorage.org/v1
+      kind: StorageCluster
+      metadata:
+        name: px-cluster
+        namespace: portworx
+        annotations:
+          portworx.io/is-openshift: 'true'
+          portworx.io/is-eks: 'true'
+          portworx.io/misc-args: '-rt_opts small_conf=1 -T px-storev2 '
+          portworx.io/preflight-check: 'true'
+      spec:
+        image: "{{ e2e_portworx_image }}"
+        imagePullPolicy: Always
+        certManager:
+          enabled: false
+        kvdb:
+          internal: true
+          enableTLS: false
+        cloudStorage:
+          deviceSpecs: ['type=gp3,size=150']
+          systemMetadataDeviceSpec: type=gp3,size=64
+        secretsProvider: k8s
+        startPort: 17001
+        stork:
+          enabled: true
+          args:
+            webhook-controller: 'true'
+        autopilot:
+          enabled: true
+          providers:
+            - name: default
+              type: prometheus
+              params:
+                url: "https://{{ e2e_thanos.resources[0].spec.host }}"
+        runtimeOptions:
+          default-io-profile: '6'
+        csi:
+          enabled: true
+          installSnapshotController: false
+        monitoring:
+          telemetry:
+            enabled: false
+          prometheus:
+            exportMetrics: true
+
+- name: Module 01 - Wait for three Ready Portworx pods
+  kubernetes.core.k8s_info:
+    kind: Pod
+    namespace: portworx
+    label_selectors: [name=portworx]
+  register: e2e_install_px_pods
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: >-
+    e2e_install_px_pods.resources | selectattr('status.conditions', 'defined')
+    | map(attribute='status.conditions') | map('selectattr', 'type', 'equalto', 'Ready')
+    | map('selectattr', 'status', 'equalto', 'True') | map('list')
+    | reject('equalto', []) | list | length >= 3
+
+- name: Module 01 - Select healthy Portworx CLI target
+  ansible.builtin.include_tasks: pxctl-target.yml
+
+- name: Module 01 - Wait for three online Portworx storage nodes
+  kubernetes.core.k8s_exec:
+    namespace: portworx
+    pod: "{{ e2e_px_pod }}"
+    container: portworx
+    command: /opt/pwx/bin/pxctl status
+  register: e2e_install_px_status
+  changed_when: false
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_install_px_status.rc == 0
+    - "'3 node(s) with storage (3 online)' in e2e_install_px_status.stdout"
+
+- name: Module 01 - Deploy OpenShift Virtualization
+  kubernetes.core.k8s:
+    state: present
+    wait: true
+    wait_condition:
+      type: Available
+      status: 'True'
+    wait_timeout: 900
+    definition:
+      apiVersion: hco.kubevirt.io/v1beta1
+      kind: HyperConverged
+      metadata:
+        name: kubevirt-hyperconverged
+        namespace: openshift-cnv
+      spec:
+        filesystemOverhead:
+          global: '0.08'
+        scratchSpaceStorageClass: px-cdi-scratch
+        vmStateStorageClass: px-rwx-file-kubevirt
+
+- name: Module 01 - Wait for Virtualization storage classes
+  kubernetes.core.k8s_info:
+    api_version: storage.k8s.io/v1
+    kind: StorageClass
+    name: "{{ item }}"
+  loop: [px-rwx-block-kubevirt, px-rwx-file-kubevirt, px-cdi-scratch]
+  register: e2e_install_storageclass
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_install_storageclass.resources | length == 1
+
+- name: Module 01 - Wait for Ready CentOS Stream 9 boot source
+  kubernetes.core.k8s_info:
+    api_version: cdi.kubevirt.io/v1beta1
+    kind: DataSource
+    namespace: openshift-virtualization-os-images
+    name: centos-stream9
+  register: e2e_install_boot_source
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_install_boot_source.resources | length == 1
+    - >-
+      e2e_install_boot_source.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0
+
+- name: Module 01 - Wait for the cluster-provided virtctl download
+  kubernetes.core.k8s_info:
+    api_version: console.openshift.io/v1
+    kind: ConsoleCLIDownload
+    name: virtctl-clidownloads-kubevirt-hyperconverged
+  register: e2e_install_client_download
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_install_client_download.resources | length == 1
+
+- name: Module 01 - Install virtctl after HyperConverged is Available
+  ansible.builtin.import_tasks: virtctl.yml
+
+- name: Module 01 - Validate completed installation
+  ansible.builtin.import_tasks: module-01.yml

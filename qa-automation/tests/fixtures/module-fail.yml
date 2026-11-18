@@ -1,0 +1,4 @@
+---
+- name: Fixture exercise fails
+  ansible.builtin.fail:
+    msg: Expected fixture failure

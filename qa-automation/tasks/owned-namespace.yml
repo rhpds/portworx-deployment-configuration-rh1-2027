@@ -1,0 +1,26 @@
+---
+- name: Inspect exercise namespace ownership
+  kubernetes.core.k8s_info:
+    kind: Namespace
+    name: "{{ e2e_owned_namespace }}"
+  register: e2e_existing_namespace
+
+- name: Refuse to modify an existing student namespace
+  ansible.builtin.assert:
+    that: >-
+      e2e_existing_namespace.resources | length == 0 or
+      (e2e_existing_namespace.resources[0].metadata.labels | default({})).get('lab.rhpds.com/e2e', '') == 'lb8002'
+    fail_msg: >-
+      Namespace {{ e2e_owned_namespace }} already exists and is not owned by LB8002 E2E.
+      Use a fresh disposable CI or choose a different namespace; do not relabel student resources.
+
+- name: Create E2E-owned exercise namespace
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        name: "{{ e2e_owned_namespace }}"
+        labels:
+          lab.rhpds.com/e2e: lb8002

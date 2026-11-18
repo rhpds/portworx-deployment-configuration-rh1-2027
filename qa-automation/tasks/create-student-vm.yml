@@ -1,0 +1,16 @@
+---
+- name: Create student VM and wait for Ready
+  kubernetes.core.k8s:
+    state: present
+    wait: true
+    wait_condition:
+      type: Ready
+      status: 'True'
+    wait_timeout: 900
+    definition: "{{ lookup('template', '../templates/student-vm.yml.j2') | from_yaml }}"
+
+- name: Wait for guest SSH
+  ansible.builtin.include_tasks: guest-command.yml
+  vars:
+    e2e_guest_name: "{{ e2e_guest_vm }}"
+    e2e_guest_command: 'true'

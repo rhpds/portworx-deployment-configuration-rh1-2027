@@ -1,0 +1,66 @@
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: {{ e2e_guest_vm }}
+  namespace: {{ e2e_namespace }}
+  labels:
+    lab.rhpds.com/e2e: lb8002
+spec:
+  dataVolumeTemplates:
+    - metadata:
+        name: {{ e2e_guest_vm }}-ds-centos-stream9
+      spec:
+        sourceRef:
+          kind: DataSource
+          name: centos-stream9
+          namespace: openshift-virtualization-os-images
+        storage:
+{% if e2e_guest_data_disk | default(false) | bool %}
+          storageClassName: px-rwx-block-kubevirt
+{% endif %}
+          resources: {}
+{% if e2e_guest_data_disk | default(false) | bool %}
+    - metadata:
+        name: {{ e2e_guest_vm }}-data-disk
+      spec:
+        preallocation: false
+        source:
+          blank: {}
+        storage:
+          storageClassName: px-rwx-block-kubevirt
+          resources:
+            requests:
+              storage: 5Gi
+{% endif %}
+  instancetype:
+    name: u1.medium
+  preference:
+    name: centos.stream9
+  runStrategy: Always
+  template:
+    spec:
+      domain:
+        devices: {}
+        resources: {}
+      terminationGracePeriodSeconds: 180
+      volumes:
+        - name: {{ e2e_guest_vm }}-ds-centos-stream9
+          dataVolume:
+            name: {{ e2e_guest_vm }}-ds-centos-stream9
+{% if e2e_guest_data_disk | default(false) | bool %}
+        - name: {{ e2e_guest_vm }}-data-disk
+          dataVolume:
+            name: {{ e2e_guest_vm }}-data-disk
+{% endif %}
+        - name: cloudinitdisk
+          cloudInitNoCloud:
+            userData: |-
+              #cloud-config
+              user: cloud-user
+      accessCredentials:
+        - sshPublicKey:
+            propagationMethod:
+              noCloud: {}
+            source:
+              secret:
+                secretName: authorized-keys
