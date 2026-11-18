@@ -67,6 +67,30 @@ these exercises are never silently skipped and reported as full coverage.
 The Showroom launcher can opt in by setting `LB8002_E2E_ALLOW_DISRUPTIVE=true`
 in the runner container. CLI `-e e2e_allow_disruptive=...` takes precedence.
 
+### Public Showroom streaming and HA placement
+
+An HA reboot must not kill the runner **or an ingress router carrying curl's
+TCP connection**. On the three-worker lab, co-locate Showroom with an existing
+router before starting the test, leaving a separate worker for the HA exercise:
+
+```sh
+oc patch deployment/showroom -n showroom-$GUID --type merge \
+  --patch-file qa-automation/config/showroom-ha-affinity.patch.yml
+oc set env deployment/showroom -n showroom-$GUID --containers=runner \
+  LB8002_E2E_ALLOW_DISRUPTIVE=true
+oc rollout status deployment/showroom -n showroom-$GUID --timeout=240s
+curl --http1.1 --fail-with-body --no-buffer "$SHOWROOM_URL/stream/qa/e2e"
+```
+
+Apply the patch in the catalog/deployment setup for newly ordered load-test CIs,
+not from inside an active E2E process. It preserves the existing router placement
+and schedules only Showroom alongside a default ingress router. If no safe worker
+is available, module 03 fails with a placement error instead of rebooting ingress.
+
+Long waits use retry/async progress output to keep the SSE connection active.
+A curl/network error is not a full streamed-test pass, even if module JSON later
+shows the underlying exercises succeeded.
+
 ## Load testing and results
 
 Run **one workflow per disposable cluster**, scaling load across separately
@@ -97,7 +121,9 @@ Namespaces `vmtest` and `appio` must be absent or carry the ownership label
 an unowned dynamic-I/O StorageClass. Do not relabel student resources to bypass
 this protection. Operator/monitoring changes remain cluster-wide.
 
-Module 03 excludes nodes hosting Showroom from migration/reboot destinations.
+Module 03 excludes nodes hosting Showroom **and ingress routers** from reboot
+destinations. If the VM already occupies the only safe worker, it first migrates
+away, then performs the measured migration back onto that worker.
 For another in-cluster runner, set `-e e2e_runner_node=<node-name>` (or set
 `NODE_NAME` in its environment). If no safe worker is available, the module
 fails rather than rebooting the runner. A brief reboot that does not actually

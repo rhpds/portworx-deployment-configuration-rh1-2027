@@ -1,0 +1,26 @@
+---
+- name: Start a fresh cross-node student VM migration
+  kubernetes.core.k8s:
+    state: present
+    generate_name: lb8002-migrate-
+    definition:
+      apiVersion: kubevirt.io/v1
+      kind: VirtualMachineInstanceMigration
+      metadata:
+        namespace: "{{ e2e_namespace }}"
+      spec:
+        vmiName: "{{ e2e_vm }}"
+        addedNodeSelector:
+          kubernetes.io/hostname: "{{ e2e_migration_target }}"
+  register: e2e_new_migration
+
+- name: Wait for this student VM migration to succeed
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachineInstanceMigration
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_new_migration.result.metadata.name }}"
+  register: e2e_current_migration
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until: e2e_current_migration.resources[0].status.phase | default('') == 'Succeeded'

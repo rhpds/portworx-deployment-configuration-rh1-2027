@@ -31,22 +31,23 @@
 - name: Module 03 - Find Ready nodes and healthy Portworx target
   ansible.builtin.include_tasks: pxctl-target.yml
 
-- name: Module 03 - Locate Showroom pods to protect the test runner
+- name: Module 03 - Locate Showroom and ingress pods to protect the public stream
   kubernetes.core.k8s_info:
     kind: Pod
   register: e2e_cluster_pods
 
-- name: Module 03 - Exclude Showroom nodes and the current VM node from migration targets
+- name: Module 03 - Protect runner and ingress nodes from reboot
   ansible.builtin.set_fact:
     e2e_protected_nodes: >-
-      {{ (e2e_cluster_pods.resources | selectattr('metadata.namespace', 'search', 'showroom')
+      {{ (e2e_cluster_pods.resources
+          | selectattr('metadata.namespace', 'search', '(^showroom)|(^openshift-ingress$)')
           | selectattr('spec.nodeName', 'defined') | map(attribute='spec.nodeName') | list)
          | union([e2e_runner_node]) | reject('equalto', '') | list }}
-    e2e_migration_candidates: []
+    e2e_all_worker_nodes: []
 
-- name: Module 03 - Select only Ready non-control-plane worker destinations
+- name: Module 03 - Collect Ready schedulable non-control-plane workers
   ansible.builtin.set_fact:
-    e2e_migration_candidates: "{{ e2e_migration_candidates + [item.metadata.name] }}"
+    e2e_all_worker_nodes: "{{ e2e_all_worker_nodes + [item.metadata.name] }}"
   loop: "{{ e2e_nodes.resources }}"
   loop_control:
     label: "{{ item.metadata.name }}"
@@ -55,40 +56,47 @@
     - "'node-role.kubernetes.io/master' not in item.metadata.labels"
     - "'node-role.kubernetes.io/control-plane' not in item.metadata.labels"
     - item.metadata.name in e2e_ready_nodes
-    - item.metadata.name not in e2e_protected_nodes
-    - item.metadata.name != e2e_before_migration.resources[0].status.nodeName
     - not (item.spec.unschedulable | default(false) | bool)
+
+- name: Module 03 - Select workers outside the runner and ingress path
+  ansible.builtin.set_fact:
+    e2e_migration_candidates: "{{ e2e_all_worker_nodes | difference(e2e_protected_nodes) | sort }}"
+
+- name: Module 03 - Prefer a different safe worker without an extra migration
+  ansible.builtin.set_fact:
+    e2e_migration_candidates: >-
+      {{ e2e_migration_candidates | difference([e2e_before_migration.resources[0].status.nodeName]) | sort }}
+  when: e2e_migration_candidates | length > 1
 
 - name: Module 03 - Require a safe worker destination
   ansible.builtin.assert:
     that: e2e_migration_candidates | length > 0
-    fail_msg: No safe migration/reboot target outside Showroom and the current VM node. Run from an external runner.
+    fail_msg: >-
+      No worker is free of both Showroom and ingress routers. Before starting E2E,
+      apply config/showroom-ha-affinity.patch.yml to co-locate Showroom with an
+      ingress router. Never reschedule an active runner from inside its own test.
 
-- name: Module 03 - Start a fresh cross-node live migration
-  kubernetes.core.k8s:
-    state: present
-    generate_name: lb8002-migrate-
-    definition:
-      apiVersion: kubevirt.io/v1
-      kind: VirtualMachineInstanceMigration
-      metadata:
-        namespace: "{{ e2e_namespace }}"
-      spec:
-        vmiName: "{{ e2e_vm }}"
-        addedNodeSelector:
-          kubernetes.io/hostname: "{{ e2e_migration_candidates | first }}"
-  register: e2e_new_migration
+- name: Module 03 - Move the VM away first if it already occupies the only safe reboot worker
+  ansible.builtin.include_tasks: migrate-student-vm.yml
+  vars:
+    e2e_migration_target: "{{ e2e_all_worker_nodes | difference(e2e_migration_candidates) | sort | first }}"
+  when:
+    - e2e_migration_candidates | length == 1
+    - e2e_before_migration.resources[0].status.nodeName == (e2e_migration_candidates | first)
+    - e2e_all_worker_nodes | difference(e2e_migration_candidates) | length > 0
 
-- name: Module 03 - Wait for this migration to succeed
+- name: Module 03 - Read the source node for the measured live migration
   kubernetes.core.k8s_info:
     api_version: kubevirt.io/v1
-    kind: VirtualMachineInstanceMigration
+    kind: VirtualMachineInstance
     namespace: "{{ e2e_namespace }}"
-    name: "{{ e2e_new_migration.result.metadata.name }}"
-  register: e2e_current_migration
-  retries: "{{ e2e_retries }}"
-  delay: "{{ e2e_delay }}"
-  until: e2e_current_migration.resources[0].status.phase | default('') == 'Succeeded'
+    name: "{{ e2e_vm }}"
+  register: e2e_before_migration
+
+- name: Module 03 - Live migrate onto the safe reboot worker
+  ansible.builtin.include_tasks: migrate-student-vm.yml
+  vars:
+    e2e_migration_target: "{{ e2e_migration_candidates | first }}"
 
 - name: Module 03 - Verify migrated data and retain migration evidence
   ansible.builtin.import_tasks: ../tasks/module-03.yml
@@ -124,18 +132,19 @@
     name: "{{ e2e_reboot_node }}"
   register: e2e_worker_before_reboot
 
-- name: Module 03 - Recheck Showroom placement immediately before the reboot
+- name: Module 03 - Recheck runner and ingress placement immediately before the reboot
   kubernetes.core.k8s_info:
     kind: Pod
     field_selectors: ["spec.nodeName={{ e2e_reboot_node }}"]
   register: e2e_reboot_target_pods
 
-- name: Module 03 - Refuse to reboot a node now hosting Showroom or the configured runner
+- name: Module 03 - Refuse to reboot a node now hosting Showroom ingress or the configured runner
   ansible.builtin.assert:
     that:
       - e2e_reboot_node != e2e_runner_node
       - >-
-        e2e_reboot_target_pods.resources | selectattr('metadata.namespace', 'search', 'showroom')
+        e2e_reboot_target_pods.resources
+        | selectattr('metadata.namespace', 'search', '(^showroom)|(^openshift-ingress$)')
         | list | length == 0
 
 - name: Module 03 - Schedule the student worker reboot

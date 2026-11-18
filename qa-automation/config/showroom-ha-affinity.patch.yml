@@ -1,0 +1,13 @@
+---
+# Apply before starting E2E, never from inside an active runner workflow.
+spec:
+  template:
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - namespaces: [openshift-ingress]
+              labelSelector:
+                matchLabels:
+                  ingresscontroller.operator.openshift.io/deployment-ingresscontroller: default
+              topologyKey: kubernetes.io/hostname
