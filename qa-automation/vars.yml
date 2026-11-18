@@ -15,8 +15,6 @@ e2e_ssh_key: "{{ e2e_work_dir }}/id_rsa"
 e2e_retries: 90
 e2e_delay: 10
 e2e_autopilot_settle_seconds: 60
-# Must be explicitly enabled on disposable QA clusters for modules 03 and 04.
-e2e_allow_disruptive: "{{ lookup('env', 'LB8002_E2E_ALLOW_DISRUPTIVE') | default('false', true) | bool }}"
 e2e_runner_node: "{{ lookup('env', 'NODE_NAME') | default('', true) }}"
 e2e_portworx_image: docker.io/portworx/oci-monitor:3.7.1
 e2e_portworx_package: portworx-certified

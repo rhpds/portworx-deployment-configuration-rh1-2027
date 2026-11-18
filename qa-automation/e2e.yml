@@ -1,6 +1,6 @@
 ---
 # Full student workflow. Keep this filename: the Showroom runner invokes e2e.yml.
-- name: Check full-workflow safety before changing the disposable cluster
+- name: Initialize the full student E2E workflow on the disposable cluster
   hosts: localhost
   connection: local
   gather_facts: false
@@ -8,18 +8,6 @@
     - vars.yml
   tags: [always]
   tasks:
-    - name: Require explicit consent for worker reboot and destructive guest restore
-      ansible.builtin.assert:
-        that: e2e_allow_disruptive | bool
-        fail_msg: >-
-          Full E2E completes the student exercises, including a worker reboot and
-          deleting/restoring guest /etc/fstab. On a disposable QA cluster only,
-          pass -e e2e_allow_disruptive=true. No destructive exercise is silently skipped.
-      when: >-
-        ('all' in ansible_run_tags and
-         (['module03', 'module04'] | difference(ansible_skip_tags) | length > 0)) or
-        (ansible_run_tags | intersect(['module03', 'module04']) | difference(ansible_skip_tags) | length > 0)
-
     - name: Create the result directory for this invocation
       ansible.builtin.file:
         path: "{{ e2e_artifacts_dir }}"

@@ -45,27 +45,26 @@ and separate from exported result JSON. Never commit or publish private keys.
 export KUBECONFIG=/path/to/lab.kubeconfig
 ansible-playbook -i localhost, qa-automation/healthcheck.yml
 
-# Required consent: module 03 reboots a worker; module 04 deletes/restores fstab.
-ansible-playbook -i localhost, qa-automation/e2e.yml \
-  -e e2e_allow_disruptive=true
+# Full student workflow: includes worker reboot and guest snapshot/restore.
+ansible-playbook -i localhost, qa-automation/e2e.yml
 
 # A standalone module (earlier module prerequisites must already exist):
 ansible-playbook -i localhost, qa-automation/modules/module-02.yml
 
 # Or select a module through the main entry point:
-ansible-playbook -i localhost, qa-automation/e2e.yml --tags module04 \
-  -e e2e_allow_disruptive=true
+ansible-playbook -i localhost, qa-automation/e2e.yml --tags module04
 ```
 
 `e2e.yaml` accepts the same options. `K8S_AUTH_KUBECONFIG` takes precedence over
 `KUBECONFIG`; `-e k8s_kubeconfig=...` overrides both. Polling defaults to 90
 retries with a 10-second delay. Override shared settings with `-e`.
 
-The full workflow refuses to start without explicit destructive-exercise
-consent. Selecting module 03/04 independently also requires that consent;
-these exercises are never silently skipped and reported as full coverage.
-The Showroom launcher can opt in by setting `LB8002_E2E_ALLOW_DISRUPTIVE=true`
-in the runner container. CLI `-e e2e_allow_disruptive=...` takes precedence.
+Starting E2E through the Showroom curl endpoint runs all six student modules
+without an enable flag or extra environment configuration. Module 03 performs
+the worker reboot and module 04 performs the guest snapshot/restore exercise.
+The obsolete `e2e_allow_disruptive` and `LB8002_E2E_ALLOW_DISRUPTIVE` flags are
+not consulted. Resource-ownership and safe reboot-target checks remain mandatory.
+Only invoke this workflow on a disposable, dedicated QA cluster.
 
 ### Public Showroom streaming and HA placement
 
@@ -76,8 +75,6 @@ router before starting the test, leaving a separate worker for the HA exercise:
 ```sh
 oc patch deployment/showroom -n showroom-$GUID --type merge \
   --patch-file qa-automation/config/showroom-ha-affinity.patch.yml
-oc set env deployment/showroom -n showroom-$GUID --containers=runner \
-  LB8002_E2E_ALLOW_DISRUPTIVE=true
 oc rollout status deployment/showroom -n showroom-$GUID --timeout=240s
 curl --http1.1 --fail-with-body --no-buffer "$SHOWROOM_URL/stream/qa/e2e"
 ```

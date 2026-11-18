@@ -1,10 +1,5 @@
 ---
 # Student source: content/modules/ROOT/pages/module-03.adoc.
-- name: Module 03 - Require explicit permission for the worker reboot
-  ansible.builtin.assert:
-    that: e2e_allow_disruptive | bool
-    fail_msg: Module 03 reboots a worker. Use -e e2e_allow_disruptive=true only on a disposable QA cluster.
-
 - name: Module 03 - Check exercise namespace ownership
   ansible.builtin.include_tasks: owned-namespace.yml
   vars:

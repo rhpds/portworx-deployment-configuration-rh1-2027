@@ -1,10 +1,5 @@
 ---
 # Student source: content/modules/ROOT/pages/module-04.adoc.
-- name: Module 04 - Require permission for destructive snapshot exercise
-  ansible.builtin.assert:
-    that: e2e_allow_disruptive | bool
-    fail_msg: Module 04 deletes guest /etc/fstab and restores a snapshot. Use -e e2e_allow_disruptive=true on QA only.
-
 - name: Module 04 - Check exercise namespace ownership
   ansible.builtin.include_tasks: owned-namespace.yml
   vars:

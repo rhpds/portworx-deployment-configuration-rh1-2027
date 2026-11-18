@@ -26,7 +26,7 @@
             | selectattr('key', 'equalto', 'ansible.builtin.import_playbook') | map(attribute='value') | list ==
             ['modules/module-01.yml', 'modules/module-02.yml', 'modules/module-03.yml',
              'modules/module-04.yml', 'modules/module-05.yml', 'modules/module-06.yml']
-          - workflow[0].tasks[0]['ansible.builtin.assert'].that == 'e2e_allow_disruptive | bool'
+          - "'e2e_allow_disruptive' not in (workflow | to_json)"
 
     - name: Render regular and Autopilot VM manifests
       ansible.builtin.set_fact:
@@ -72,8 +72,10 @@
           - >-
             (install_tasks | selectattr('name', 'equalto', 'Module 01 - Create the student StorageCluster')
              | first)['kubernetes.core.k8s'].definition.spec.cloudStorage.deviceSpecs == ['type=gp3,size=150']
-          - ha_tasks[0]['ansible.builtin.assert'].that == 'e2e_allow_disruptive | bool'
-          - restore_tasks[0]['ansible.builtin.assert'].that == 'e2e_allow_disruptive | bool'
+          - ha_tasks[0]['ansible.builtin.include_tasks'] == 'owned-namespace.yml'
+          - restore_tasks[0]['ansible.builtin.include_tasks'] == 'owned-namespace.yml'
+          - "'e2e_allow_disruptive' not in (ha_tasks | to_json)"
+          - "'e2e_allow_disruptive' not in (restore_tasks | to_json)"
 
     - name: Create isolated reporting fixture directory
       ansible.builtin.tempfile:
@@ -128,7 +130,7 @@
                 that:
                   - (fail_report.content | b64decode | from_json).status == 'failed'
                   - (fail_report.content | b64decode | from_json).failed_task == 'Fixture exercise fails'
-        - name: Run the complete imported pipeline with harmless fixture exercises
+        - name: Run all six modules without an opt-in flag using harmless fixtures
           ansible.builtin.command:
             argv:
               - ansible-playbook
@@ -138,10 +140,12 @@
               - -e
               - >-
                 {{ {'e2e_module_file': playbook_dir ~ '/fixtures/module-pass.yml',
-                    'e2e_allow_disruptive': true,
                     'e2e_work_dir': test_directory.path ~ '/pipeline-private',
                     'e2e_artifacts_dir': test_directory.path ~ '/pipeline-results'} | to_json }}
           changed_when: false
+
+          environment:
+            LB8002_E2E_ALLOW_DISRUPTIVE: 'false'
 
         - name: Read all six pipeline fixture reports
           ansible.builtin.slurp:
@@ -184,7 +188,7 @@
               - tagged_reports.matched == 1
               - tagged_reports.files[0].path | basename == 'module-02.json'
 
-        - name: Verify full-run safety gate without risking a real exercise
+        - name: Verify obsolete enable flags cannot block the full E2E workflow
           ansible.builtin.command:
             argv:
               - ansible-playbook
@@ -197,11 +201,22 @@
                     'e2e_allow_disruptive': false,
                     'e2e_work_dir': test_directory.path ~ '/guard-private',
                     'e2e_artifacts_dir': test_directory.path ~ '/guard-results'} | to_json }}
-          register: guarded_run
           changed_when: false
-          failed_when: >-
-            guarded_run.rc != 2 or
-            'pass -e e2e_allow_disruptive=true' not in guarded_run.stdout
+          environment:
+            LB8002_E2E_ALLOW_DISRUPTIVE: 'false'
+
+        - name: Read all six reports with obsolete flags disabled
+          ansible.builtin.slurp:
+            src: "{{ test_directory.path }}/guard-results/module-{{ item }}.json"
+          loop: ['01', '02', '03', '04', '05', '06']
+          register: obsolete_flag_reports
+
+        - name: Require every module to execute regardless of the obsolete flags
+          ansible.builtin.assert:
+            that: (item.content | b64decode | from_json).status == 'passed'
+          loop: "{{ obsolete_flag_reports.results }}"
+          loop_control:
+            label: "{{ item.item }}"
       always:
         - name: Remove only the isolated fixture directory
           ansible.builtin.file:
