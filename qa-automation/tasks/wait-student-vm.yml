@@ -1,0 +1,15 @@
+---
+- name: Poll student VM readiness
+  kubernetes.core.k8s_info:
+    api_version: kubevirt.io/v1
+    kind: VirtualMachine
+    namespace: "{{ e2e_namespace }}"
+    name: "{{ e2e_wait_vm }}"
+  register: e2e_wait_vm_result
+  retries: "{{ e2e_retries }}"
+  delay: "{{ e2e_delay }}"
+  until:
+    - e2e_wait_vm_result.resources | length == 1
+    - >-
+      e2e_wait_vm_result.resources[0].status.conditions | default([])
+      | selectattr('type', 'equalto', 'Ready') | selectattr('status', 'equalto', 'True') | list | length > 0

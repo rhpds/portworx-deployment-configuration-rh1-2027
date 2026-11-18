@@ -113,14 +113,14 @@
     kind: VirtualMachine
     namespace: "{{ e2e_namespace }}"
     name: "{{ e2e_vm }}"
-    wait: true
-    wait_condition:
-      type: Ready
-      status: 'True'
-    wait_timeout: 900
     definition:
       spec:
         runStrategy: Always
+
+- name: Module 04 - Wait for restored VM readiness
+  ansible.builtin.include_tasks: wait-student-vm.yml
+  vars:
+    e2e_wait_vm: "{{ e2e_vm }}"
 
 - name: Module 04 - Verify restored fstab exactly matches its original contents
   ansible.builtin.include_tasks: guest-command.yml
