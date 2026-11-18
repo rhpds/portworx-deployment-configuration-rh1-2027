@@ -7,18 +7,8 @@
     name: virtctl-clidownloads-kubevirt-hyperconverged
   register: e2e_virtctl_download
 
-- name: Select Linux x86_64 virtctl download
-  ansible.builtin.set_fact:
-    e2e_virtctl_urls: >-
-      {{ e2e_virtctl_download.resources | map(attribute='spec.links') | flatten
-         | selectattr('text', 'equalto', 'Download virtctl for Linux for x86_64')
-         | map(attribute='href') | list }}
-
-- name: Require a unique cluster-provided virtctl download
-  ansible.builtin.assert:
-    that:
-      - e2e_virtctl_urls | length == 1
-    fail_msg: OpenShift Virtualization must provide one Linux x86_64 virtctl download.
+- name: Select and validate cluster-provided virtctl download
+  ansible.builtin.import_tasks: virtctl-select.yml
 
 - name: Create private temporary directory for virtctl
   ansible.builtin.tempfile:

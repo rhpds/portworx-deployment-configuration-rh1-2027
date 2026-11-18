@@ -67,6 +67,11 @@ and the private key authorized by the solver VM. For guest validation the
 playbook downloads the Linux x86_64 `virtctl` matching the cluster into a private
 temporary directory. The runner must be able to reach the cluster client download
 URL and extract a gzip tar archive; no system-wide installation is required.
+The selector uses the archive URL rather than the console's display label.
+The `virtctl-clidownloads-kubevirt-hyperconverged` ConsoleCLIDownload must exist:
+installing the operator alone does not create a completed Virtualization setup.
+Complete module 01 and wait for the HyperConverged instance to become Available
+before running post-solve E2E.
 
 ```sh
 export KUBECONFIG=/path/to/lab.kubeconfig
@@ -107,6 +112,9 @@ with production cluster credentials.
 ## Static validation
 
 ```sh
+# Offline regression tests for virtctl selection (ansible-core only):
+ansible-playbook -i localhost, qa-automation/tests/virtctl-selection.yml
+
 ansible-playbook qa-automation/e2e.yml --syntax-check
 ansible-lint qa-automation/e2e.yml
 yamllint -d '{extends: default, rules: {line-length: {max: 120}}}' \

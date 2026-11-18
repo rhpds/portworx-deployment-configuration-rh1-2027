@@ -1,0 +1,59 @@
+---
+# Offline regression coverage; no cluster or kubernetes.core dependency.
+- name: Test cluster-provided virtctl URL selection
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    expected_url: https://downloads.example.test/amd64/linux/virtctl.tar.gz
+  tasks:
+    - name: Check canonical, renamed, and absent display labels
+      ansible.builtin.include_tasks: ../tasks/virtctl-select.yml
+      vars:
+        e2e_virtctl_download:
+          resources:
+            - spec:
+                links:
+                  - href: "{{ expected_url }}"
+                    text: "{{ item }}"
+                  - href: "{{ expected_url }}"
+                  - href: https://downloads.example.test/arm64/linux/virtctl.tar.gz
+                    text: Download virtctl for Linux for ARM 64
+                  - href: https://downloads.example.test/amd64/windows/virtctl.zip
+                  - href: https://downloads.example.test/amd64/linux/oc.tar
+                  - text: Link without URL
+      loop:
+        - Download virtctl for Linux for x86_64
+        - Linux AMD64 client
+        - ""
+
+    - name: Verify only the deduplicated Linux x86_64 archive was selected
+      ansible.builtin.assert:
+        that:
+          - e2e_virtctl_urls == [expected_url]
+
+    - name: Check missing download object
+      block:
+        - name: Select from missing object
+          ansible.builtin.include_tasks: ../tasks/virtctl-select.yml
+          vars:
+            e2e_virtctl_download:
+              resources: []
+        - name: Reject unexpected success for missing object
+          ansible.builtin.fail:
+            msg: Missing object should have failed.
+      rescue:
+        - name: Verify actionable prerequisite failure
+          ansible.builtin.assert:
+            that:
+              - ansible_failed_task.name == 'Require OpenShift Virtualization client downloads'
+              - "'complete module 01' in ansible_failed_result.msg"
+
+    - name: Check unsupported architecture and ambiguous URLs
+      ansible.builtin.include_tasks: virtctl-selection-invalid.yml
+      loop:
+        - - href: https://downloads.example.test/arm64/linux/virtctl.tar.gz
+        - - href: "{{ expected_url }}"
+          - href: https://other-downloads.example.test/amd64/linux/virtctl.tar.gz
+      loop_control:
+        loop_var: invalid_links

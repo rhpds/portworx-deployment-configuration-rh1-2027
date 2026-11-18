@@ -1,0 +1,27 @@
+---
+- name: Require OpenShift Virtualization client downloads
+  ansible.builtin.assert:
+    that:
+      - e2e_virtctl_download.resources | default([]) | length > 0
+    fail_msg: >-
+      The virtctl ConsoleCLIDownload is missing. Installing the Virtualization
+      operator alone is not sufficient: complete module 01, create the
+      HyperConverged instance, and wait for it to become Available before
+      running post-solve E2E validation.
+
+- name: Select Linux x86_64 virtctl download by URL
+  ansible.builtin.set_fact:
+    e2e_virtctl_urls: >-
+      {{ e2e_virtctl_download.resources | map(attribute='spec.links', default=[]) | flatten
+         | selectattr('href', 'defined') | map(attribute='href')
+         | select('search', '/(?:amd64|x86_64)/linux/virtctl[.]tar[.]gz(?:[?].*)?$')
+         | unique | list }}
+
+- name: Require a unique cluster-provided virtctl download
+  ansible.builtin.assert:
+    that:
+      - e2e_virtctl_urls | length == 1
+    fail_msg: >-
+      Expected one Linux x86_64 virtctl archive URL, found {{ e2e_virtctl_urls | length }}.
+      Available cluster download links:
+      {{ e2e_virtctl_download.resources | map(attribute='spec.links', default=[]) | flatten }}

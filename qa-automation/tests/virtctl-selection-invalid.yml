@@ -1,0 +1,19 @@
+---
+- name: Check invalid URL selection fails safely
+  block:
+    - name: Select from invalid links
+      ansible.builtin.include_tasks: ../tasks/virtctl-select.yml
+      vars:
+        e2e_virtctl_download:
+          resources:
+            - spec:
+                links: "{{ invalid_links }}"
+    - name: Reject unexpected success for invalid links
+      ansible.builtin.fail:
+        msg: Invalid links should have failed.
+  rescue:
+    - name: Verify URL selection failure includes diagnostics
+      ansible.builtin.assert:
+        that:
+          - ansible_failed_task.name == 'Require a unique cluster-provided virtctl download'
+          - "'Available cluster download links' in ansible_failed_result.msg"
