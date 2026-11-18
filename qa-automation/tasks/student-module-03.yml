@@ -31,31 +31,16 @@
     kind: Pod
   register: e2e_cluster_pods
 
-- name: Module 03 - Protect runner and ingress nodes from reboot
+- name: Module 03 - Identify this runner without preconfigured placement
   ansible.builtin.set_fact:
-    e2e_protected_nodes: >-
-      {{ (e2e_cluster_pods.resources
-          | selectattr('metadata.namespace', 'search', '(^showroom)|(^openshift-ingress$)')
-          | selectattr('spec.nodeName', 'defined') | map(attribute='spec.nodeName') | list)
-         | union([e2e_runner_node]) | reject('equalto', '') | list }}
-    e2e_all_worker_nodes: []
+    e2e_ha_runner_hostname: "{{ lookup('env', 'HOSTNAME') | default(lookup('pipe', 'hostname'), true) }}"
 
-- name: Module 03 - Collect Ready schedulable non-control-plane workers
-  ansible.builtin.set_fact:
-    e2e_all_worker_nodes: "{{ e2e_all_worker_nodes + [item.metadata.name] }}"
-  loop: "{{ e2e_nodes.resources }}"
-  loop_control:
-    label: "{{ item.metadata.name }}"
-  when:
-    - "'node-role.kubernetes.io/worker' in item.metadata.labels"
-    - "'node-role.kubernetes.io/master' not in item.metadata.labels"
-    - "'node-role.kubernetes.io/control-plane' not in item.metadata.labels"
-    - item.metadata.name in e2e_ready_nodes
-    - not (item.spec.unschedulable | default(false) | bool)
+- name: Module 03 - Plan HA from the current cluster topology
+  ansible.builtin.include_tasks: ha-node-plan.yml
 
-- name: Module 03 - Select workers outside the runner and ingress path
-  ansible.builtin.set_fact:
-    e2e_migration_candidates: "{{ e2e_all_worker_nodes | difference(e2e_protected_nodes) | sort }}"
+- name: Module 03 - Automatically prepare a worker when ingress occupies every remaining worker
+  ansible.builtin.include_tasks: ha-prepare-worker.yml
+  when: e2e_migration_candidates | length == 0
 
 - name: Module 03 - Prefer a different safe worker without an extra migration
   ansible.builtin.set_fact:
@@ -67,9 +52,8 @@
   ansible.builtin.assert:
     that: e2e_migration_candidates | length > 0
     fail_msg: >-
-      No worker is free of both Showroom and ingress routers. Before starting E2E,
-      apply config/showroom-ha-affinity.patch.yml to co-locate Showroom with an
-      ingress router. Never reschedule an active runner from inside its own test.
+      Automatic HA preparation did not produce a safe worker. Refusing to reboot
+      a node hosting the runner or an ingress router. No HA validation is skipped.
 
 - name: Module 03 - Move the VM away first if it already occupies the only safe reboot worker
   ansible.builtin.include_tasks: migrate-student-vm.yml

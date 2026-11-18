@@ -66,23 +66,40 @@ The obsolete `e2e_allow_disruptive` and `LB8002_E2E_ALLOW_DISRUPTIVE` flags are
 not consulted. Resource-ownership and safe reboot-target checks remain mandatory.
 Only invoke this workflow on a disposable, dedicated QA cluster.
 
-### Public Showroom streaming and HA placement
+### Self-contained HA preparation and public Showroom streaming
 
-An HA reboot must not kill the runner **or an ingress router carrying curl's
-TCP connection**. On the three-worker lab, co-locate Showroom with an existing
-router before starting the test, leaving a separate worker for the HA exercise:
+No catalog settings or manual Showroom placement patch are required:
 
 ```sh
-oc patch deployment/showroom -n showroom-$GUID --type merge \
-  --patch-file qa-automation/config/showroom-ha-affinity.patch.yml
-oc rollout status deployment/showroom -n showroom-$GUID --timeout=240s
 curl --http1.1 --fail-with-body --no-buffer "$SHOWROOM_URL/stream/qa/e2e"
 ```
 
-Apply the patch in the catalog/deployment setup for newly ordered load-test CIs,
-not from inside an active E2E process. It preserves the existing router placement
-and schedules only Showroom alongside a default ingress router. If no safe worker
-is available, module 03 fails with a placement error instead of rebooting ingress.
+Module 03 first uses a worker that already hosts neither Showroom nor ingress.
+If Showroom and two ingress routers occupy all three workers, E2E prepares its
+own HA target without moving/restarting Showroom:
+
+1. Identify this runner pod and the current E2E request peer in its access log.
+2. Map that peer to a healthy ingress router, protecting the router/node carrying
+   the curl stream. Older E2E requests and health checks are not used as the current peer.
+3. Choose another Ready, schedulable worker outside Showroom and the active stream path.
+4. Temporarily cordon that worker and evict only its named default-router pods,
+   using namespace-scoped, UID-guarded `policy/v1` eviction requests that respect PDBs.
+5. Wait for the ingress controller to restore router redundancy away from that worker.
+6. In an `always` block, uncordon only the same worker owned by this invocation and
+   remove the temporary marker, including when preparation fails.
+7. Re-read actual pod placement before migrating the VM and performing the real reboot.
+
+No Showroom/ingress Deployment, affinity policy, catalog, or provisioning setting
+is rewritten. Replacement router pods remain where the normal scheduler places
+them. Other clients using an evicted router may need to reconnect; this is a
+disruptive test on a disposable dedicated cluster, not production maintenance.
+
+Automatic preparation requires two healthy default routers on distinct nodes.
+For streamed execution, the runner access-log peer must map uniquely to a healthy
+router pod/host IP. If identification or redundancy checks fail, E2E refuses to
+guess or evict a potentially active stream router. External CLI execution does
+not require an SSE access log. Preexisting cordons and other runs' ownership
+markers are never adopted or cleared.
 
 Long waits use retry/async progress output to keep the SSE connection active.
 A curl/network error is not a full streamed-test pass, even if module JSON later
@@ -118,9 +135,10 @@ Namespaces `vmtest` and `appio` must be absent or carry the ownership label
 an unowned dynamic-I/O StorageClass. Do not relabel student resources to bypass
 this protection. Operator/monitoring changes remain cluster-wide.
 
-Module 03 excludes nodes hosting Showroom **and ingress routers** from reboot
-destinations. If the VM already occupies the only safe worker, it first migrates
-away, then performs the measured migration back onto that worker.
+Module 03 automatically prepares a router-free worker if necessary, and rechecks
+that no Showroom or ingress pod is present before rebooting it. If the VM already
+occupies the only safe worker, it first migrates away, then performs the measured
+migration back onto that worker.
 For another in-cluster runner, set `-e e2e_runner_node=<node-name>` (or set
 `NODE_NAME` in its environment). If no safe worker is available, the module
 fails rather than rebooting the runner. A brief reboot that does not actually
@@ -142,6 +160,7 @@ for playbook in qa-automation/modules/*.yml; do
 done
 ansible-playbook -i localhost, qa-automation/tests/virtctl-selection.yml
 ansible-playbook -i localhost, qa-automation/tests/student-workflow.yml
+ansible-playbook -i localhost, qa-automation/tests/ha-topology.yml
 yamllint -d '{extends: default, rules: {line-length: {max: 120}}}' \
   qa-automation/e2e.yml qa-automation/e2e.yaml qa-automation/vars.yml \
   qa-automation/modules/ qa-automation/tasks/ qa-automation/tests/

@@ -1,0 +1,70 @@
+---
+# Pure topology planning; also exercised by offline fixtures.
+- name: Reset HA topology facts
+  ansible.builtin.set_fact:
+    e2e_all_worker_nodes: []
+    e2e_ha_router_pods: []
+    e2e_ha_ready_routers: []
+    e2e_ha_runner_pods: []
+    e2e_showroom_nodes: >-
+      {{ (e2e_cluster_pods.resources | selectattr('metadata.namespace', 'search', '^showroom')
+          | selectattr('spec.nodeName', 'defined') | map(attribute='spec.nodeName') | list)
+         | union([e2e_runner_node]) | reject('equalto', '') | list }}
+    e2e_ingress_nodes: >-
+      {{ e2e_cluster_pods.resources | selectattr('metadata.namespace', 'equalto', 'openshift-ingress')
+         | selectattr('spec.nodeName', 'defined') | map(attribute='spec.nodeName') | unique | list }}
+
+- name: Collect Ready schedulable non-control-plane HA workers
+  ansible.builtin.set_fact:
+    e2e_all_worker_nodes: "{{ e2e_all_worker_nodes + [item.metadata.name] }}"
+  loop: "{{ e2e_nodes.resources }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - "'node-role.kubernetes.io/worker' in item.metadata.labels"
+    - "'node-role.kubernetes.io/master' not in item.metadata.labels"
+    - "'node-role.kubernetes.io/control-plane' not in item.metadata.labels"
+    - item.metadata.name in e2e_ready_nodes
+    - not (item.spec.unschedulable | default(false) | bool)
+
+- name: Locate default ingress router pods
+  ansible.builtin.set_fact:
+    e2e_ha_router_pods: "{{ e2e_ha_router_pods + [item] }}"
+  loop: "{{ e2e_cluster_pods.resources }}"
+  loop_control:
+    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+  when:
+    - item.metadata.namespace == 'openshift-ingress'
+    - >-
+      (item.metadata.labels | default({})).get(
+        'ingresscontroller.operator.openshift.io/deployment-ingresscontroller', '') == 'default'
+
+- name: Collect healthy default routers
+  ansible.builtin.set_fact:
+    e2e_ha_ready_routers: "{{ e2e_ha_ready_routers + [item] }}"
+  loop: "{{ e2e_ha_router_pods }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - not (item.metadata.deletionTimestamp | default(false))
+    - >-
+      item.status.conditions | default([]) | selectattr('type', 'equalto', 'Ready')
+      | selectattr('status', 'equalto', 'True') | list | length == 1
+
+- name: Identify this runner pod rather than another Showroom instance
+  ansible.builtin.set_fact:
+    e2e_ha_runner_pods: "{{ e2e_ha_runner_pods + [item] }}"
+    e2e_showroom_nodes: "{{ e2e_showroom_nodes | union([item.spec.nodeName]) }}"
+  loop: "{{ e2e_cluster_pods.resources }}"
+  loop_control:
+    label: "{{ item.metadata.namespace }}/{{ item.metadata.name }}"
+  when:
+    - item.metadata.name == e2e_ha_runner_hostname
+    - item.spec.nodeName is defined
+    - "'runner' in (item.spec.containers | default([]) | map(attribute='name') | list)"
+
+- name: Prefer a worker that already hosts neither Showroom nor ingress
+  ansible.builtin.set_fact:
+    e2e_protected_nodes: "{{ e2e_showroom_nodes | union(e2e_ingress_nodes) }}"
+    e2e_migration_candidates: >-
+      {{ e2e_all_worker_nodes | difference(e2e_showroom_nodes) | difference(e2e_ingress_nodes) | sort }}

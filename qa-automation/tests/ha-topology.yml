@@ -1,0 +1,284 @@
+---
+# Pure Ansible fixtures: no Kubernetes modules, credentials, or cluster access.
+- name: Test self-contained HA preparation planning offline
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    e2e_runner_node: ''
+    e2e_ha_runner_hostname: showroom-fixture
+    fixture_nodes:
+      - metadata:
+          name: control
+          uid: uid-control
+          labels:
+            node-role.kubernetes.io/worker: ''
+            node-role.kubernetes.io/master: ''
+        spec: {}
+      - metadata:
+          name: worker-a
+          uid: uid-a
+          labels: {node-role.kubernetes.io/worker: ''}
+        spec: {}
+      - metadata:
+          name: worker-b
+          uid: uid-b
+          labels: {node-role.kubernetes.io/worker: ''}
+        spec: {}
+      - metadata:
+          name: worker-c
+          uid: uid-c
+          labels: {node-role.kubernetes.io/worker: ''}
+        spec: {}
+    fixture_showroom:
+      metadata: {name: showroom-fixture, namespace: showroom-fixture, uid: uid-showroom}
+      spec:
+        nodeName: worker-a
+        containers: [{name: runner}]
+    fixture_router_b:
+      metadata:
+        name: router-b
+        namespace: openshift-ingress
+        uid: uid-router-b
+        labels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: default}
+      spec: {nodeName: worker-b}
+      status:
+        podIP: 10.0.0.12
+        hostIP: 10.0.1.12
+        conditions: [{type: Ready, status: 'True'}]
+    fixture_router_c:
+      metadata:
+        name: router-c
+        namespace: openshift-ingress
+        uid: uid-router-c
+        labels: {ingresscontroller.operator.openshift.io/deployment-ingresscontroller: default}
+      spec: {nodeName: worker-c}
+      status:
+        podIP: 10.0.0.13
+        hostIP: 10.0.1.13
+        conditions: [{type: Ready, status: 'True'}]
+    fixture_log_b: 'INFO:     10.0.0.12:0 - "GET /stream/qa/e2e HTTP/1.1" 200 OK'
+    fixture_log_c: 'INFO:     10.0.0.13:0 - "GET /stream/qa/e2e HTTP/1.1" 200 OK'
+  tasks:
+    - name: Set the three-worker topology that previously required a manual patch
+      ansible.builtin.set_fact:
+        e2e_nodes: {resources: "{{ fixture_nodes }}"}
+        e2e_ready_nodes: [control, worker-a, worker-b, worker-c]
+        e2e_cluster_pods:
+          resources: ["{{ fixture_showroom }}", "{{ fixture_router_b }}", "{{ fixture_router_c }}"]
+        e2e_ha_streamed: true
+        e2e_ha_runner_log: "{{ fixture_log_c }}\n{{ fixture_log_b }}"
+
+    - name: Plan the unmodified default cluster topology
+      ansible.builtin.include_tasks: ../tasks/ha-node-plan.yml
+
+    - name: Verify no free worker and no control-plane candidate
+      ansible.builtin.assert:
+        that:
+          - e2e_migration_candidates | length == 0
+          - e2e_all_worker_nodes | sort == ['worker-a', 'worker-b', 'worker-c']
+          - e2e_ha_runner_pods | length == 1
+
+    - name: Prepare a fallback plan protecting the latest E2E stream
+      ansible.builtin.include_tasks: ../tasks/ha-stream-plan.yml
+
+    - name: Verify only the non-stream router worker is selected
+      ansible.builtin.assert:
+        that:
+          - e2e_ha_stream_nodes == ['worker-b']
+          - e2e_ha_prepare_node == 'worker-c'
+          - e2e_ha_prepare_uid == 'uid-c'
+          - e2e_ha_prepare_node not in e2e_showroom_nodes
+          - e2e_ha_prepare_node not in e2e_ha_stream_nodes
+
+    - name: Swap which router carries the current curl request
+      ansible.builtin.set_fact:
+        e2e_ha_runner_log: "{{ fixture_log_b }}\n{{ fixture_log_c }}"
+
+    - name: Replan without stale stream-peer state
+      ansible.builtin.include_tasks: ../tasks/ha-stream-plan.yml
+
+    - name: Verify the other router is protected on the next run
+      ansible.builtin.assert:
+        that:
+          - e2e_ha_stream_nodes == ['worker-c']
+          - e2e_ha_prepare_node == 'worker-b'
+
+    - name: Test a host-network router peer address
+      ansible.builtin.set_fact:
+        e2e_ha_runner_log: 'INFO:     10.0.1.12:0 - "GET /stream/qa/e2e HTTP/1.1" 200 OK'
+
+    - name: Map the router host IP
+      ansible.builtin.include_tasks: ../tasks/ha-stream-plan.yml
+
+    - name: Verify the host IP resolves to the correct protected worker
+      ansible.builtin.assert:
+        that: e2e_ha_stream_nodes == ['worker-b']
+
+    - name: Test an external CLI runner with no SSE request
+      ansible.builtin.set_fact:
+        e2e_ha_streamed: false
+        e2e_ha_runner_log: ''
+
+    - name: Plan the external-runner case without requiring an access log
+      ansible.builtin.include_tasks: ../tasks/ha-stream-plan.yml
+
+    - name: Verify external execution still protects Showroom
+      ansible.builtin.assert:
+        that:
+          - e2e_ha_prepare_node != 'worker-a'
+          - e2e_ha_stream_nodes | length == 0
+
+    - name: Test an already-safe deployment without evacuating any router
+      ansible.builtin.set_fact:
+        e2e_cluster_pods:
+          resources:
+            - "{{ fixture_showroom | combine({'spec': {'nodeName': 'worker-b'}}, recursive=true) }}"
+            - "{{ fixture_router_b }}"
+            - "{{ fixture_router_c }}"
+
+    - name: Plan the existing safe topology
+      ansible.builtin.include_tasks: ../tasks/ha-node-plan.yml
+
+    - name: Verify the normal path needs no topology preparation
+      ansible.builtin.assert:
+        that: e2e_migration_candidates == ['worker-a']
+
+    - name: Test unsafe topology and ambiguous stream cases fail before any mutation
+      ansible.builtin.include_tasks: ha-plan-invalid.yml
+      loop:
+        - name: missing access log
+          log: ''
+          expected_task: Require an identifiable request peer for streamed execution
+        - name: unmapped public client IP
+          log: 'INFO:     203.0.113.1:0 - "GET /stream/qa/e2e HTTP/1.1" 200 OK'
+          expected_task: Refuse to guess the ingress path carrying the E2E stream
+        - name: degraded router redundancy
+          degraded: true
+          expected_task: Require a healthy redundant router and an eligible HA worker
+        - name: preexisting cordon
+          cordoned: true
+          expected_task: Require a healthy redundant router and an eligible HA worker
+        - name: unknown ingress workload
+          unknown_ingress: true
+          expected_task: Refuse to evacuate unknown or non-default ingress workloads
+        - name: missing streamed runner identity
+          runner_hostname: missing-runner
+          expected_task: Require an identifiable request peer for streamed execution
+      loop_control:
+        loop_var: unsafe_case
+        label: "{{ unsafe_case.name }}"
+
+    - name: Read preparation operations for cleanup and scope checks
+      ansible.builtin.set_fact:
+        prepare_tasks: "{{ lookup('file', '../tasks/ha-prepare-worker.yml') | from_yaml }}"
+
+    - name: Extract the guarded preparation block
+      ansible.builtin.set_fact:
+        prepare_block: >-
+          {{ prepare_tasks | selectattr('name', 'equalto',
+             'Prepare an HA worker and always restore its scheduling state') | first }}
+
+    - name: Set values for rendering the actual production eviction request
+      ansible.builtin.set_fact:
+        e2e_router_to_evict: "{{ fixture_router_c }}"
+        e2e_ha_prepare_node: worker-c
+        e2e_ha_prepare_uid: uid-c
+        e2e_ha_setup_id: fixture-owner
+
+    - name: Allocate an isolated production-payload template fixture
+      ansible.builtin.tempfile:
+        state: file
+        suffix: .j2
+        prefix: lb8002-eviction-fixture-
+      register: eviction_template
+
+    - name: Render the actual production eviction expression without executing it
+      block:
+        - name: Save the production payload expression as a local template
+          ansible.builtin.copy:
+            dest: "{{ eviction_template.path }}"
+            mode: '0600'
+            content: "{{ prepare_block.block[1]['ansible.builtin.command'].stdin }}"
+        - name: Render the production eviction request body
+          ansible.builtin.set_fact:
+            fixture_eviction: "{{ lookup('template', eviction_template.path) | from_json }}"
+      always:
+        - name: Remove the isolated payload template
+          ansible.builtin.file:
+            path: "{{ eviction_template.path }}"
+            state: absent
+
+    - name: Verify exact eviction namespace name UID and grace period
+      ansible.builtin.assert:
+        that:
+          - fixture_eviction.apiVersion == 'policy/v1'
+          - fixture_eviction.kind == 'Eviction'
+          - fixture_eviction.metadata.namespace == 'openshift-ingress'
+          - fixture_eviction.metadata.name == 'router-c'
+          - fixture_eviction.deleteOptions.preconditions.uid == 'uid-router-c'
+          - fixture_eviction.deleteOptions.gracePeriodSeconds == 30
+          - >-
+            prepare_block.block[1]['ansible.builtin.command'].argv[3]
+            .startswith('/api/v1/namespaces/openshift-ingress/pods/')
+          - prepare_block.block[1]['ansible.builtin.command'].argv[3].endswith('/eviction')
+
+    - name: Verify namespace-scoped UID-guarded evictions and unconditional uncordon
+      ansible.builtin.assert:
+        that:
+          - prepare_block.block[1]['ansible.builtin.command'].argv[:3] == ['oc', 'create', '--raw']
+          - prepare_block.block[1]['ansible.builtin.command'].argv[6] == '--request-timeout=15s'
+          - prepare_block.block[1].loop_control.loop_var == 'e2e_router_to_evict'
+          - "'/api/v1/namespaces/openshift-ingress/pods/' in lookup('file', '../tasks/ha-prepare-worker.yml')"
+          - "'/eviction' in lookup('file', '../tasks/ha-prepare-worker.yml')"
+          - "'e2e_router_to_evict.metadata.uid' in lookup('file', '../tasks/ha-prepare-worker.yml')"
+          - "'--disable-eviction' not in lookup('file', '../tasks/ha-prepare-worker.yml')"
+          - prepare_block.always | length == 2
+          - not prepare_block.always[1]['kubernetes.core.k8s'].definition.spec.unschedulable
+          - >-
+            prepare_block.always[1]['kubernetes.core.k8s'].definition.metadata.annotations[
+              'lab.rhpds.com/e2e-ha-owner'] == none
+          - prepare_block.always[1].when | length == 3
+          - "'kind: Deployment' not in lookup('file', '../tasks/ha-prepare-worker.yml')"
+
+    - name: Allocate an isolated cleanup-guard fixture directory
+      ansible.builtin.tempfile:
+        state: directory
+        prefix: lb8002-ha-cleanup-fixture-
+      register: cleanup_fixture_directory
+
+    - name: Test actual cleanup conditions without invoking Kubernetes
+      block:
+        - name: Replace only the production cleanup action with a harmless marker
+          ansible.builtin.copy:
+            dest: "{{ cleanup_fixture_directory.path }}/restore.yml"
+            mode: '0600'
+            content: >-
+              {{ [prepare_block.always[1] | dict2items
+                  | rejectattr('key', 'in', ['kubernetes.core.k8s', 'retries', 'delay', 'register', 'until'])
+                  | items2dict
+                  | combine({'name': 'Fixture cleanup marker',
+                             'ansible.builtin.set_fact': {'fixture_restore_called': true}})] | to_nice_yaml }}
+
+        - name: Test owned unowned missing and replaced-node cleanup conditions
+          ansible.builtin.include_tasks: ha-cleanup-case.yml
+          loop:
+            - nodes:
+                - metadata: {uid: uid-c, annotations: {lab.rhpds.com/e2e-ha-owner: fixture-owner}}
+              allowed: true
+            - nodes:
+                - metadata: {uid: uid-c, annotations: {lab.rhpds.com/e2e-ha-owner: other-owner}}
+              allowed: false
+            - nodes:
+                - metadata: {uid: replaced-uid, annotations: {lab.rhpds.com/e2e-ha-owner: fixture-owner}}
+              allowed: false
+            - nodes: []
+              allowed: false
+          loop_control:
+            loop_var: cleanup_case
+            label: "restore={{ cleanup_case.allowed }}"
+      always:
+        - name: Remove only the isolated cleanup fixture directory
+          ansible.builtin.file:
+            path: "{{ cleanup_fixture_directory.path }}"
+            state: absent

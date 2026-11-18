@@ -1,0 +1,12 @@
+---
+- name: Set cleanup ownership fixture
+  ansible.builtin.set_fact:
+    e2e_ha_node_cleanup: {resources: "{{ cleanup_case.nodes }}"}
+    fixture_restore_called: false
+
+- name: Evaluate the production cleanup guards with a harmless replacement action
+  ansible.builtin.include_tasks: "{{ cleanup_fixture_directory.path }}/restore.yml"
+
+- name: Verify only this run's original worker would be uncordoned
+  ansible.builtin.assert:
+    that: fixture_restore_called == cleanup_case.allowed

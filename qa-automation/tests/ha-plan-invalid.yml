@@ -1,0 +1,32 @@
+---
+- name: Configure an unsafe topology fixture
+  ansible.builtin.set_fact:
+    e2e_nodes:
+      resources: >-
+        {{ fixture_nodes[:3] +
+           [fixture_nodes[3] | combine({'spec': {'unschedulable': unsafe_case.cordoned | default(false)}})] }}
+    e2e_cluster_pods:
+      resources: >-
+        {{ [fixture_showroom, fixture_router_b,
+            fixture_router_c | combine({'status': {'conditions': [{'type': 'Ready', 'status': 'False'}]}}
+                                       if unsafe_case.degraded | default(false) else {}, recursive=true)]
+           + ([{'metadata': {'name': 'unknown-ingress', 'namespace': 'openshift-ingress',
+                             'uid': 'uid-unknown', 'labels': {}}, 'spec': {'nodeName': 'worker-c'}}]
+              if unsafe_case.unknown_ingress | default(false) else []) }}
+    e2e_ha_runner_hostname: "{{ unsafe_case.runner_hostname | default('showroom-fixture') }}"
+    e2e_ha_streamed: true
+    e2e_ha_runner_log: "{{ unsafe_case.log | default(fixture_log_b) }}"
+
+- name: Require the unsafe plan to fail at its safety assertion
+  block:
+    - name: Plan the unsafe fixture topology
+      ansible.builtin.include_tasks: ../tasks/ha-node-plan.yml
+    - name: Plan the unsafe fixture stream path
+      ansible.builtin.include_tasks: ../tasks/ha-stream-plan.yml
+    - name: Reject unexpectedly accepted unsafe topology
+      ansible.builtin.fail:
+        msg: An unsafe plan was accepted.
+  rescue:
+    - name: Verify the expected pre-mutation safety failure
+      ansible.builtin.assert:
+        that: ansible_failed_task.name == unsafe_case.expected_task

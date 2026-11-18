@@ -1,0 +1,69 @@
+---
+# Pure fallback planning. Protect the actual SSE ingress hop, not every router.
+- name: Parse the most recent E2E request peer from this runner access log
+  ansible.builtin.set_fact:
+    e2e_ha_stream_peers: >-
+      {{ e2e_ha_runner_log | regex_findall(
+          '(?m)^INFO:\s+([0-9.]+):[0-9]+\s+-\s+"GET /stream/qa/e2e(?:[?][^ ]*)? HTTP/[^ "]+"\s+200(?: OK)?\s*$') }}
+    e2e_ha_stream_nodes: []
+
+- name: Require an identifiable request peer for streamed execution
+  ansible.builtin.assert:
+    that:
+      - e2e_ha_runner_pods | length == 1
+      - e2e_ha_stream_peers | length > 0
+    fail_msg: >-
+      Cannot identify this E2E stream in the runner access log. Refusing to
+      evict an ingress router without knowing which router carries the stream.
+  when: e2e_ha_streamed | bool
+
+- name: Map the current stream peer to a healthy router node
+  ansible.builtin.set_fact:
+    e2e_ha_stream_nodes: "{{ e2e_ha_stream_nodes | union([item.spec.nodeName]) }}"
+  loop: "{{ e2e_ha_ready_routers }}"
+  loop_control:
+    label: "{{ item.metadata.name }}"
+  when:
+    - e2e_ha_streamed | bool
+    - >-
+      (e2e_ha_stream_peers | last) in
+      [item.status.podIP | default(''), item.status.hostIP | default('')]
+
+- name: Refuse to guess the ingress path carrying the E2E stream
+  ansible.builtin.assert:
+    that: e2e_ha_stream_nodes | length == 1
+    fail_msg: >-
+      The E2E request peer does not map uniquely to a healthy ingress router.
+      No node or router has been changed. Check runner proxy/access-log configuration.
+  when: e2e_ha_streamed | bool
+
+- name: Choose a worker outside the runner and active stream path
+  ansible.builtin.set_fact:
+    e2e_ha_fallback_candidates: >-
+      {{ e2e_all_worker_nodes | difference(e2e_showroom_nodes) | difference(e2e_ha_stream_nodes) | sort }}
+
+- name: Require a healthy redundant router and an eligible HA worker
+  ansible.builtin.assert:
+    that:
+      - e2e_ha_fallback_candidates | length > 0
+      - e2e_ha_ready_routers | length >= 2
+      - e2e_ha_ready_routers | map(attribute='spec.nodeName') | unique | list | length >= 2
+    fail_msg: >-
+      HA preparation needs a schedulable worker outside Showroom and the active
+      stream path, plus two healthy routers on distinct nodes. Refusing unsafe disruption.
+
+- name: Save the temporary router-evacuation target
+  ansible.builtin.set_fact:
+    e2e_ha_prepare_node: "{{ e2e_ha_fallback_candidates | first }}"
+    e2e_ha_prepare_uid: >-
+      {{ (e2e_nodes.resources | selectattr('metadata.name', 'equalto', e2e_ha_fallback_candidates | first)
+          | first).metadata.uid }}
+
+- name: Refuse to evacuate unknown or non-default ingress workloads
+  ansible.builtin.assert:
+    that: >-
+      (e2e_cluster_pods.resources | selectattr('metadata.namespace', 'equalto', 'openshift-ingress')
+       | selectattr('spec.nodeName', 'defined')
+       | selectattr('spec.nodeName', 'equalto', e2e_ha_prepare_node) | map(attribute='metadata.uid') | list)
+      | difference(e2e_ha_router_pods | map(attribute='metadata.uid') | list) | length == 0
+    fail_msg: Refusing to relocate unknown ingress workloads on the selected worker.
