@@ -91,7 +91,7 @@
   until: e2e_current_migration.resources[0].status.phase | default('') == 'Succeeded'
 
 - name: Module 03 - Verify migrated data and retain migration evidence
-  ansible.builtin.import_tasks: module-03.yml
+  ansible.builtin.import_tasks: ../tasks/module-03.yml
 
 - name: Module 03 - Read migrated VMI
   kubernetes.core.k8s_info:

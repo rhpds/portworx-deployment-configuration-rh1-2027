@@ -39,4 +39,4 @@
     e2e_guest_vm: "{{ e2e_console_vm }}"
 
 - name: Module 02 - Validate VM storage and guest access
-  ansible.builtin.import_tasks: module-02.yml
+  ansible.builtin.import_tasks: ../tasks/module-02.yml

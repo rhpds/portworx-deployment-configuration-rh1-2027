@@ -129,4 +129,4 @@
       test "$(sha256sum /etc/fstab)" = {{ e2e_original_fstab_checksum | quote }}
 
 - name: Module 04 - Validate snapshot and restore evidence
-  ansible.builtin.import_tasks: module-04.yml
+  ansible.builtin.import_tasks: ../tasks/module-04.yml

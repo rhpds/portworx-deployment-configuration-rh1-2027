@@ -146,4 +146,4 @@
       sudo resize2fs /dev/vdb1 && df -h /data
 
 - name: Module 05 - Validate expanded volume and guest filesystem
-  ansible.builtin.import_tasks: module-05.yml
+  ansible.builtin.import_tasks: ../tasks/module-05.yml

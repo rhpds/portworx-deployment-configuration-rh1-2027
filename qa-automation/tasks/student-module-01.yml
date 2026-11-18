@@ -237,4 +237,4 @@
   ansible.builtin.import_tasks: virtctl.yml
 
 - name: Module 01 - Validate completed installation
-  ansible.builtin.import_tasks: module-01.yml
+  ansible.builtin.import_tasks: ../tasks/module-01.yml
